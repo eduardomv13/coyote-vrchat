@@ -584,10 +584,11 @@ class AiCard(Card):
         return Path(__file__).resolve().parent.parent / "coyote_mcp.py"
 
     def mcp_command(self):
-        return f'claude mcp add --scope user coyote -- "{mcp_register.python_for_mcp()}" "{self.mcp_script()}"'
+        parts = [p for p in mcp_register.mcp_launch(self.mcp_script()) if p]
+        return "claude mcp add --scope user coyote -- " + " ".join(f'"{p}"' for p in parts)
 
     def _register_desktop(self):
-        results = mcp_register.register_desktop(mcp_register.python_for_mcp(), str(self.mcp_script()))
+        results = mcp_register.register_desktop(*mcp_register.mcp_launch(self.mcp_script()))
         good = [r for r in results if r.action != "error"]
         for r in results:
             self.app.engine.control.log(

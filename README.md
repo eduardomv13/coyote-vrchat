@@ -61,6 +61,12 @@ Linux or macOS).
 You need **Windows 10/11 with Bluetooth LE** and **Python 3.10 or newer**
 (<https://www.python.org/downloads/> — during installation, check *Add python.exe to PATH*).
 
+**No Python at all:** download `CoyoteVRChat-windows.zip` from the [Releases](../../releases) page (or the
+`CoyoteVRChat-windows` artifact of the latest *Build Windows .exe* run under Actions), unzip it anywhere and run
+`CoyoteVRChat.exe`. Keep `coyote-mcp.exe` in the same folder: it is the MCP server the AI section registers for
+Claude. The .exe accepts the same command-line options listed below (with `--headless` it prints nothing, since it
+has no console window).
+
 **Easy way:** download or clone this repository and double-click `run.bat`. The first time it creates a `.venv`
 folder and installs the only dependency (`bleak`, the Bluetooth library). After that it just opens the program.
 

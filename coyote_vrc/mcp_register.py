@@ -21,6 +21,7 @@ from typing import Iterable, Optional
 
 SERVER_NAME = "coyote"
 CONFIG_NAME = "claude_desktop_config.json"
+MCP_EXE = "coyote-mcp.exe"
 
 
 class ConfigError(Exception):
@@ -43,8 +44,16 @@ def python_for_mcp(exe: Optional[str] = None) -> str:
     return str(p)
 
 
-def server_entry(python: str, script: str) -> dict:
-    return {"command": str(python), "args": [str(script)]}
+def mcp_launch(script, frozen: Optional[bool] = None, exe: Optional[str] = None) -> tuple:
+    """(command, script) that starts the MCP server. In the built .exe there is no Python, so it is the
+    coyote-mcp.exe shipped next to it, with no script."""
+    if getattr(sys, "frozen", False) if frozen is None else frozen:
+        return str(Path(exe or sys.executable).with_name(MCP_EXE)), None
+    return python_for_mcp(exe), str(script)
+
+
+def server_entry(python: str, script: Optional[str]) -> dict:
+    return {"command": str(python), "args": [str(script)] if script else []}
 
 
 def candidate_paths(environ=None) -> list:

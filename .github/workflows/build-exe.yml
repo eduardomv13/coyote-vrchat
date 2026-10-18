@@ -1,0 +1,90 @@
+name: Build Windows .exe
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build CoyoteVRChat.exe (the window)
+        # bleak picks its Windows backend (and the winrt packages it needs) at runtime, so PyInstaller
+        # cannot see those imports on its own.
+        run: >
+          pyinstaller --noconfirm --clean --onefile --windowed --name CoyoteVRChat
+          --collect-submodules bleak --collect-submodules winrt
+          main.py
+
+      - name: Build coyote-mcp.exe (MCP server for Claude, needs a console for stdio)
+        run: pyinstaller --noconfirm --onefile --console --name coyote-mcp coyote_mcp.py
+
+      - name: Smoke test (simulated Coyote, local API, MCP)
+        shell: pwsh
+        run: |
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP "appdata"
+          New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
+          $app = Start-Process dist\CoyoteVRChat.exe -ArgumentList "--simulate", "--headless" -PassThru
+          try {
+            $requests = @(
+              '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}',
+              '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"coyote_status","arguments":{}}}'
+            ) -join "`n"
+            $out = ""
+            foreach ($i in 1..30) {
+              Start-Sleep -Seconds 1
+              if ($app.HasExited) { throw "CoyoteVRChat.exe exited early (code $($app.ExitCode))" }
+              if (-not (Test-Path "$env:APPDATA\CoyoteVRChat\settings.json")) { continue }
+              $out = $requests | dist\coyote-mcp.exe | Out-String
+              if ($out -match '"isError": false') { break }
+            }
+            Write-Output $out
+            if ($out -notmatch '"isError": false') { throw "the MCP server could not reach the app" }
+          } finally {
+            if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
+          }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force package | Out-Null
+          Copy-Item dist\CoyoteVRChat.exe, dist\coyote-mcp.exe, README.md, LICENSE package\
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: CoyoteVRChat-windows
+          path: package/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: CoyoteVRChat-windows
+          path: CoyoteVRChat
+
+      - name: Zip
+        run: cd CoyoteVRChat && zip -r ../CoyoteVRChat-windows.zip .
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: CoyoteVRChat-windows.zip

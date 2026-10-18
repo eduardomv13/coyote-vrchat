@@ -57,6 +57,12 @@ class Merge(unittest.TestCase):
         self.assertEqual(reg.python_for_mcp("/x/y/pythonw.exe"), str(Path("/x/y/python.exe")))
         self.assertEqual(reg.python_for_mcp("/x/y/python.exe"), str(Path("/x/y/python.exe")))
 
+    def test_mcp_launch_uses_bundled_exe_when_frozen(self):
+        cmd, script = reg.mcp_launch("s.py", frozen=True, exe="/x/CoyoteVRChat.exe")
+        self.assertEqual((cmd, script), (str(Path("/x/coyote-mcp.exe")), None))
+        self.assertEqual(reg.server_entry(cmd, script), {"command": cmd, "args": []})
+        self.assertEqual(reg.mcp_launch("s.py", frozen=False, exe="/x/pythonw.exe"), (str(Path("/x/python.exe")), "s.py"))
+
 
 class Files(unittest.TestCase):
     def setUp(self):
