@@ -1,7 +1,8 @@
 # Coyote panel for VRChat avatars
 
 A hand-held control panel for a **DG-LAB Coyote 3.0**, built into a VRChat avatar. Two intensity sliders (A and B), −/+
-buttons, and a frequency control. You grab the gold grips with PhysBones, the numbers show on the plate, and the values
+buttons, and a frequency control. You grab the gold grips (PhysBones) and drag them sideways, you press the buttons by
+touching them with a fingertip (contacts), the numbers show on the plate, and the values
 reach the [coyote-vrchat PC program](../README.md) through VRChat OSC.
 
 ![The panel, rendered in the Unity editor](images/panel.png)
@@ -28,9 +29,17 @@ Everything in the safety section of the [main README](../README.md) applies: adu
 informed consent, never put electrodes on or across the chest, head, neck or throat, start at zero and go slowly.
 On top of that, this panel adds risks of its own:
 
-- **Anyone who can grab the panel can change the intensity of whoever wears the electrodes.** The grips and buttons
-  accept grabs from the wearer *and from other players*. "Lock in world" leaves the panel standing in the world so
-  other people can walk up to it. Only do that with people you completely trust, and not in public instances.
+- **Anyone who can grab or touch the panel can change the intensity of whoever wears the electrodes.** The grips accept
+  grabs, and the buttons accept fingertips, from the wearer *and from other players*. "Lock in world" leaves the panel
+  standing in the world so other people can walk up to it. Only do that with people you completely trust, and not in
+  public instances.
+- **Letting go of a grip sets its channel back to 0.** The power only stays while the grip is held, or while it is
+  *posed* (grab it and pull the trigger/click to lock it in place; that keeps the value until you release the pose).
+  The buttons set a value that stays until you change it.
+- **A touch button is one step per touch, never a repeat.** A fingertip resting on a button must not keep raising the
+  power, so to go up by 30 you touch three times. The wearer's own fingers count **except those of the hand that holds
+  the panel** (they are always near it): with the panel in the left hand, only the right hand's fingers work for the
+  wearer. Other players' fingers always work.
 - **The panel's numbers are fractions of the program's ceiling, not device units.** The panel sends `CoyoteA` =
   value ÷ 200. The PC program turns that into a fraction of **its own intensity ceiling** (200 by default). Panel value
   200 always means "the ceiling", panel value 100 means "half of it". If you lower the ceiling in the program to 80,
@@ -43,8 +52,9 @@ On top of that, this panel adds risks of its own:
   the panel and read its values.
 - While the panel is installed, it writes `CoyoteA` and `CoyoteB` on every frame. **Do not also drive those two
   parameters from a radial puppet** (as in [AVATAR_SETUP.md](../docs/AVATAR_SETUP.md)): the panel overwrites them.
-- Whether another player can actually grab the panel also depends on VRChat's own PhysBone/interaction rules and their
-  settings. **That has not been tested** (see below), so do not assume that it is blocked either.
+- Whether another player can actually grab or touch the panel also depends on VRChat's own PhysBone/contact rules and
+  their settings (for example the contact and interaction safety settings). **That has not been tested** (see below), so
+  do not assume that it is blocked either.
 
 ---
 
@@ -52,9 +62,9 @@ On top of that, this panel adds risks of its own:
 
 | Control | What it does |
 |---|---|
-| **A** / **B** gold grips | Grab and pull along the bar: the value follows (0 at the left end, 200 at the right end). Release and the value holds. Grabbing without pulling does not change it. The grips can also be *posed* (grab, then click the trigger/click) to lock them where they are. |
-| **−** / **+** buttons (per channel) | Touch = ±10, limited to 0…200. Hold to repeat every 0.35 s. |
-| **▼** / **▲** (frequency) | Touch = ∓/±10 Hz, limited to 10…100 Hz. Starts at 50 Hz. |
+| **A** / **B** gold grips | Grab and drag **sideways** along the bar: the value follows (0 at the left end, 200 at the right end). **Let go and the value drops to 0** while the grip springs back. Pulling forward, backward, up or down, or to the left of the rest position, does not raise it (see [how the sliders work](#how-the-sliders-work)). Grabbing without pulling does not change it. A grip can also be *posed* (grab, then pull the trigger/click) to lock it where it is; a posed grip keeps its value until the pose is released. |
+| **−** / **+** buttons (per channel) | Touch with a fingertip = ±10, limited to 0…200. One step per touch; a finger left on the button does not repeat. |
+| **▼** / **▲** (frequency) | Touch = ∓/±10 Hz, limited to 10…100 Hz. Starts at 50 Hz. One step per touch. |
 | Plate numbers | Channel A, channel B and frequency, always readable (unlit). |
 | Menu **Coyote > Show panel** | Shows/hides the panel in your hand. Showing it also puts it back in your hand if it was locked in the world. |
 | Menu **Coyote > Lock in world** | The panel stays where it is (VRChat's constraint "Freeze To World"), so you can leave it standing and use both hands, or let others use it. |
@@ -125,7 +135,7 @@ What the install adds to your avatar, all inside the `Coyote Panel` child object
 - Modular Avatar *Merge Animator* (the 14-layer FX controller), *Parameters*, *Menu Installer* + menu items, *Object
   Toggle* and *Bone Proxy* components;
 - a `VRCParentConstraint` that follows the hand (and "Freeze To World" for the lock);
-- the panel itself: 8 PhysBones, 14 renderers, 5 materials;
+- the panel itself: 2 PhysBones (the slider grips), 12 contact receivers (two per touch button), 14 renderers, 5 materials;
 - generated assets in `Assets/CoyotePanel/Generated/<avatar name>/` (meshes, materials and the controller; **one folder per
   avatar**, so several avatars in one project do not overwrite each other).
 
@@ -181,8 +191,8 @@ avatar):
 | `CoyotePad/Show`, `CoyotePad/Anchor` | bool | yes | 1 + 1 |
 | `CoyoteA`, `CoyoteB`, `CoyoteStop`, `CoyotePad/Zero` | float / bool | no (local only) | 0 |
 
-The PhysBone parameters (`CoyotePad/PbA_Stretch`, `…_IsGrabbed` and so on) are not part of the avatar's expression
-parameters, so they are not synced and do not count. Measured in a built test copy: the author's avatar totals **184 / 256**
+The PhysBone and contact parameters (`CoyotePad/PbA_Stretch`, `…_IsGrabbed`, `…_IsPosed`, `CoyotePad/AMinus_TouchSelf`
+and so on) are not part of the avatar's expression parameters, so they are not synced and do not count. Measured in a built test copy: the author's avatar totals **184 / 256**
 bits with the panel, and a bare sample rig **50 / 256** (26 of them from the panel).
 
 ### The FX controller (14 layers, 40 states)
@@ -193,9 +203,9 @@ converts them if your avatar uses Write Defaults off).
 | Layer | Job |
 |---|---|
 | `CoyotePad_Mirror` | Copies the synced numbers to local floats for the display, and writes `CoyoteA = ValA/200`, `CoyoteB = ValB/200`. Loops every frame. |
-| `CoyotePad_TrackA`, `_TrackB` | While a grip is grabbed, turns its PhysBone stretch into the value. |
-| `CoyotePad_StepA`, `_StepB` | −/+ buttons: ±10, hold to repeat. |
-| `CoyotePad_Freq` | ▼/▲: ±10 Hz, 10…100. |
+| `CoyotePad_TrackA`, `_TrackB` | While a grip is grabbed or posed, turns its PhysBone stretch into the value; when it is neither, sets the value to 0. |
+| `CoyotePad_StepA`, `_StepB` | −/+ touch buttons: ±10 per touch, no repeat, a press lasts at least 0.1 s (contact chatter adds no steps). |
+| `CoyotePad_Freq` | ▼/▲ touch buttons: ±10 Hz per touch, 10…100. |
 | `CoyotePad_Clamp` | Safety clamp at 200. |
 | `CoyotePad_Zero` | "Zero channels" and STOP set A and B to 0. |
 | `CoyotePad_ShowReset` | "Show panel" clears the world lock. |
@@ -208,7 +218,8 @@ property (`material._MainTex_ST`, `m_LocalPosition`) needs **all** its component
 transition with **no condition and no exit time** is stripped by the avatar build (the Mirror layer uses exit time 0
 and duration 0 to loop).
 
-Performance cost, as built: 8 PhysBone components (16 bone transforms), 14 renderers with 5 materials, about 5 MB of
+Performance cost, as built: 2 PhysBone components (4 bone transforms), 12 local-only contact receivers (they do not
+count toward the avatar's contact rank), 14 renderers with 5 materials, about 5 MB of
 texture memory (two uncompressed textures, no mipmaps, so the thin digits stay sharp), and the controller's 14 layers.
 
 ## What has been tested
@@ -224,7 +235,7 @@ main README).
   differences in 14 layers, 40 states, 23 parameters, all transitions, drivers and blend trees), and so are the
   hierarchy, the meshes and the hand placement (with *Hand-bone axes*).
 - An offline simulator ([`Tools~/simulate_controller.py`](io.github.eduardomv13.coyote-panel/Tools~/simulate_controller.py))
-  replays the controller and passes **46 checks** (dragging, holding, −/+, frequency limits, zero/stop, the lock, digits
+  replays the controller and passes **55 checks** (dragging, letting go, posing, the dead zone, touching −/+ and the arrows, frequency limits, zero/stop, the lock, digits
   0…200, `CoyoteA = value/200` after load). A deliberately broken controller (a Mirror transition with no exit time, the
   bug that once stopped the slider from reaching the program) fails 11 of them. It tests the *logic*, with VRChat's
   animator semantics as we understand them; it is not VRChat.
@@ -247,13 +258,41 @@ main README).
   use as unconfirmed until you try it.
 - Anything in VRChat on **any avatar other than the author's**, **the right hand** in the game, and avatars with **Write
   Defaults off** (the build converts the states, which was checked in the editor, not in the game).
-- In the game, separately: the **−/+ buttons**, the **frequency arrows**, **Lock in world** and posing a grip. (Earlier
-  versions of the arrows did not work and were rebuilt; the sliders are the part that was confirmed.)
+- **Everything that changed in 0.2.0 has not been tried in VRChat yet:** letting go of a grip setting the value to 0,
+  the long-bone grips only responding to sideways pulls, and the touch buttons (that a fingertip registers, that the
+  right radius and position feel right, that your own fingers and other players' fingers both work, and that the holding
+  hand does not trigger anything). Before 0.2.0 the sliders were the part confirmed in the game; the buttons were
+  PhysBones you had to hold, and they were not confirmed.
+- Whether VRChat really gives **every** avatar fingertip contact senders with the tags `Finger`/`FingerL`/`FingerR`, and
+  whether your own are detected (the VRChat documentation says humanoid avatars get them automatically; this package
+  relies on that and has not seen it work).
+- In the game, separately: **Lock in world** and posing a grip.
 - **Quest/Android.** The panel uses PhysBones, a constraint and built-in unlit shaders that were never checked for Quest.
   Upload PC only, or remove the panel from the Quest variant.
 - Other **Unity, SDK or Modular Avatar versions**, the two other install methods above, and the Standard-shader fallback
   (when lilToon is not in the project).
 - Whether the hand placement suits other avatars: the numbers were tuned on one. Check them in the Scene view.
+
+## How the sliders work
+
+A grip is one PhysBone bone lying along the bar, and VRChat's `_Stretch` parameter says how far that bone is stretched.
+VRChat stretches a bone according to the **distance** between its root and your hand, so with a short bone *any* pull
+away from rest (forward, up, down, to the other side) would count as "more". To make only the sideways part count, each
+bone is **1.5 m long**: its root sits 1.5 m to the left of the bar, and only its tip (with the gold knob) is near the
+panel. Over such a long bone the distance is almost only the sideways distance. A forward pull of 10 cm adds about 3
+mm (under 2 % of the bar), a pull of 20 cm adds about 13 mm, and a pull toward the root is ignored (Max Squish is 0).
+A small dead zone (3 % of the travel) hides what is left, and the bone is only allowed to rotate 0.3°, which should keep the knob within about 8 mm of the bar.
+
+Side effects you should know about:
+
+- The bone is invisible and **1.5 m long**, so the grip can be grabbed anywhere along a line that runs 1.5 m from the
+  left end of each bar (past the panel's left edge, as seen from the front). Whether grabbing it away from the knob
+  moves the knob the way you would expect has not been tried; it is an odd, invisible handle. The length is `PB_ROOT_DISTANCE` in
+  `Editor/PanelLayout.cs` (shorter = a shorter line but more leakage from forward pulls; longer = the reverse).
+- A pull toward the root and a forward pull never move the knob much, but a big forward pull (30 cm or more) can still
+  add a few percent. This is a physical approximation, not a guarantee.
+- Letting go of the grip makes the knob spring back by itself (the PhysBone's `Pull`), and the value goes to 0 at the same
+  moment, so the marker on the plate does not wait for the knob.
 
 ## Troubleshooting
 
@@ -262,6 +301,8 @@ main README).
 | *Tools > Coyote Panel* is missing | The package did not compile: look for red errors in the console. Check you have the SDK and Modular Avatar at the versions above. |
 | "needs a Humanoid rig" / "no hand bone" | Set the avatar's rig to Humanoid and map the hand and lower-arm bones. |
 | The panel is in the wrong place or upside down | Use the options window: Hand, distances, Roll, Flip facing, or *Hand-bone axes*. Rebuild, and check in the Scene view. |
+| A touch button does nothing | The button needs a fingertip contact sender with the tag `Finger` (any player) or `FingerR`/`FingerL` (yourself, the hand that does not hold the panel). VRChat adds them to humanoid avatars unless the avatar defines its own, so check that your avatar and the other player's are humanoid. Other players' fingers are also subject to VRChat's own safety/interaction settings (theirs and yours) |
+| A touch button fires by itself | Something of yours keeps entering it: the hand that holds the panel is excluded on purpose, but props or a second avatar's hands are not. Move the panel (options window: *Out of the palm* / *Along the fingers*) |
 | The panel is always visible in the game | You left the preview on. Turn off `Coyote Panel/Container/Content` (the options window has a button) and upload again. |
 | In the game the panel moves but nothing reaches the program | OSC enabled? **Options > OSC > Reset Config**, then select the avatar again. Is the program running and showing "OSC: receiving"? See [docs/AVATAR_SETUP.md](../docs/AVATAR_SETUP.md). |
 | `CoyoteA`/`CoyoteB` jump back to 0 or flicker | Something else also writes them (for example a radial puppet). Remove it: the panel owns those two parameters. |

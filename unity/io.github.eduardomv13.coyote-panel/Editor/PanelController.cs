@@ -30,8 +30,8 @@ namespace CoyotePanel.Editor
             void B(string n) { c.AddParameter(new AnimatorControllerParameter { name = n, type = AnimatorControllerParameterType.Bool, defaultBool = false }); }
             F(P_A); F(P_B); F(P_STRA); F(P_STRB); F(P_VALA_F); F(P_VALB_F); F(P_FREQ_F); F(P_ONE, 1f);
             I(P_FREQ, 50); I(P_VALA); I(P_VALB);
-            B(P_GRABA); B(P_GRABB); B(P_UP); B(P_DN); B(P_SHOW); B(P_ANCHOR); B(P_ZERO); B(P_STOP);
-            B(P_AMINUS); B(P_APLUS); B(P_BMINUS); B(P_BPLUS);
+            B(P_GRABA); B(P_GRABB); B(P_POSEA); B(P_POSEB); B(P_SHOW); B(P_ANCHOR); B(P_ZERO); B(P_STOP);
+            foreach (var tb in AllButtons) { B(TouchSelf(tb)); B(TouchOthers(tb)); }
 
             // ---- mirror: synced Int -> local float (blend trees) and -> CoyoteA/B (OSC = value/200)
             {
@@ -51,9 +51,10 @@ namespace CoyotePanel.Editor
                 }
             }
 
-            // ---- bars: while the grip is grabbed, the stretch becomes the value; released = holds
-            TrackLayer(c, "CoyotePad_TrackA", P_GRABA, P_STRA, P_VALA);
-            TrackLayer(c, "CoyotePad_TrackB", P_GRABB, P_STRB, P_VALB);
+            // ---- bars: while the grip is grabbed (or posed = locked in place), the stretch becomes the value;
+            //      letting go of a grip that is not posed sets the value back to 0
+            TrackLayer(c, "CoyotePad_TrackA", P_GRABA, P_POSEA, P_STRA, P_VALA);
+            TrackLayer(c, "CoyotePad_TrackB", P_GRABB, P_POSEB, P_STRB, P_VALB);
 
             // ---- "Show panel": returns the panel to the hand (unlocks it from the world)
             {
@@ -65,14 +66,14 @@ namespace CoyotePanel.Editor
                 t = Link(rst, idle); t.AddCondition(AnimatorConditionMode.IfNot, 0, P_SHOW);
             }
 
-            // ---- -/+ buttons per channel (+-10; holding repeats)
-            StepLayer(c, "CoyotePad_StepA", P_AMINUS, P_APLUS, P_VALA);
-            StepLayer(c, "CoyotePad_StepB", P_BMINUS, P_BPLUS, P_VALB);
+            // ---- -/+ buttons per channel (+-10 per touch)
+            StepLayer(c, "CoyotePad_StepA", TB_AMINUS, TB_APLUS, P_VALA);
+            StepLayer(c, "CoyotePad_StepB", TB_BMINUS, TB_BPLUS, P_VALB);
 
             // ---- animated button click (blendshapes on the static mesh)
-            PressLayer(c, "CoyotePad_PressA", P_AMINUS, P_APLUS, BS_AMINUS, BS_APLUS);
-            PressLayer(c, "CoyotePad_PressB", P_BMINUS, P_BPLUS, BS_BMINUS, BS_BPLUS);
-            PressLayer(c, "CoyotePad_PressF", P_DN, P_UP, BS_DN, BS_UP);
+            PressLayer(c, "CoyotePad_PressA", TB_AMINUS, TB_APLUS, BS_AMINUS, BS_APLUS);
+            PressLayer(c, "CoyotePad_PressB", TB_BMINUS, TB_BPLUS, BS_BMINUS, BS_BPLUS);
+            PressLayer(c, "CoyotePad_PressF", TB_DN, TB_UP, BS_DN, BS_UP);
 
             // ---- safety clamp at the ceiling (200)
             {
@@ -96,10 +97,10 @@ namespace CoyotePanel.Editor
                 var dn = State(sm, "Down -10", 1, 1);
                 Driver(up, true).parameters.Add(Add(P_FREQ, 10f));
                 Driver(dn, true).parameters.Add(Add(P_FREQ, -10f));
-                var t = Link(idle, up); t.AddCondition(AnimatorConditionMode.If, 0, P_UP); t.AddCondition(AnimatorConditionMode.Less, 91f, P_FREQ);
-                t = Link(up, idle); t.AddCondition(AnimatorConditionMode.IfNot, 0, P_UP);
-                t = Link(idle, dn); t.AddCondition(AnimatorConditionMode.If, 0, P_DN); t.AddCondition(AnimatorConditionMode.Greater, 19f, P_FREQ);
-                t = Link(dn, idle); t.AddCondition(AnimatorConditionMode.IfNot, 0, P_DN);
+                foreach (var t in LinkOnTouch(idle, up, TB_UP)) t.AddCondition(AnimatorConditionMode.Less, 91f, P_FREQ);
+                LinkOffTouch(up, idle, TB_UP, TOUCH_DEBOUNCE);
+                foreach (var t in LinkOnTouch(idle, dn, TB_DN)) t.AddCondition(AnimatorConditionMode.Greater, 19f, P_FREQ);
+                LinkOffTouch(dn, idle, TB_DN, TOUCH_DEBOUNCE);
             }
 
             // ---- zero / stop: puts A and B at 0 on the panel
@@ -162,24 +163,58 @@ namespace CoyotePanel.Editor
             return c;
         }
 
-        static void TrackLayer(AnimatorController c, string name, string gate, string stretch, string val)
+        // While the grip is held (IsGrabbed) or locked in place (IsPosed) the stretch is copied into the value every frame.
+        // When it is neither, the value goes back to 0: letting go of the slider cuts the power as the grip springs back.
+        static void TrackLayer(AnimatorController c, string name, string grabbed, string posed, string stretch, string val)
         {
             var sm = Layer(c, name);
             var idle = State(sm, "Idle", 0, 0);
             var t1 = State(sm, "Track1", 1, -1);
             var t2 = State(sm, "Track2", 1, 1);
+            var rel = State(sm, "Release", 2, 0);
             foreach (var s in new[] { t1, t2 })
                 Driver(s, true).parameters.Add(CopyRange(stretch, val, STR_SRC_MIN, STR_SRC_MAX, 0f, 200f));
-            // only takes effect once the grip has left rest (grabbing without pulling does not zero the value)
-            var t = Link(idle, t1); t.AddCondition(AnimatorConditionMode.If, 0, gate); t.AddCondition(AnimatorConditionMode.Greater, 0.01f, stretch);
-            t = Link(t1, t2); t.AddCondition(AnimatorConditionMode.If, 0, gate);
-            t = Link(t2, t1); t.AddCondition(AnimatorConditionMode.If, 0, gate);
-            t = Link(t1, idle); t.AddCondition(AnimatorConditionMode.IfNot, 0, gate);
-            t = Link(t2, idle); t.AddCondition(AnimatorConditionMode.IfNot, 0, gate);
+            Driver(rel, true).parameters.Add(SetV(val, 0f));
+            foreach (var gate in new[] { grabbed, posed })
+            {
+                // only takes effect once the grip has left rest (grabbing without pulling does not change the value)
+                var t = Link(idle, t1); t.AddCondition(AnimatorConditionMode.If, 0, gate); t.AddCondition(AnimatorConditionMode.Greater, STR_SRC_MIN, stretch);
+                t = Link(t1, t2); t.AddCondition(AnimatorConditionMode.If, 0, gate);
+                t = Link(t2, t1); t.AddCondition(AnimatorConditionMode.If, 0, gate);
+            }
+            foreach (var s in new[] { t1, t2 })
+            {
+                var t = Link(s, rel); t.AddCondition(AnimatorConditionMode.IfNot, 0, grabbed); t.AddCondition(AnimatorConditionMode.IfNot, 0, posed);
+            }
+            // exit time 0 + zero duration: a valid transition without a condition (see the note at the top of the file)
+            var back = Link(rel, idle); back.hasExitTime = true; back.exitTime = 0f;
+        }
+
+        // a button counts as touched when EITHER of its two receivers is on
+        static List<AnimatorStateTransition> LinkOnTouch(AnimatorState a, AnimatorState b, string button)
+        {
+            var list = new List<AnimatorStateTransition>();
+            foreach (var p in new[] { TouchSelf(button), TouchOthers(button) })
+            {
+                var t = Link(a, b);
+                t.AddCondition(AnimatorConditionMode.If, 0, p);
+                list.Add(t);
+            }
+            return list;
+        }
+
+        // ... and as released when BOTH are off (and, with minSeconds, no sooner than that after the press began)
+        static AnimatorStateTransition LinkOffTouch(AnimatorState a, AnimatorState b, string button, float minSeconds)
+        {
+            var t = Link(a, b);
+            t.AddCondition(AnimatorConditionMode.IfNot, 0, TouchSelf(button));
+            t.AddCondition(AnimatorConditionMode.IfNot, 0, TouchOthers(button));
+            if (minSeconds > 0f) { t.hasExitTime = true; t.exitTime = minSeconds; }
+            return t;
         }
 
         // two neighboring buttons: Idle / A pressed / B pressed; each clip writes BOTH blendshapes
-        static void PressLayer(AnimatorController c, string name, string grabA, string grabB, string bsA, string bsB)
+        static void PressLayer(AnimatorController c, string name, string buttonA, string buttonB, string bsA, string bsB)
         {
             string path = "Container/Content/Static3D";
             var sm = Layer(c, name);
@@ -192,40 +227,26 @@ namespace CoyotePanel.Editor
             var idle = State(sm, "Idle", 0, 0); idle.motion = clip(0f, 0f, "Idle");
             var sa = State(sm, "Press " + bsA, 1, -1); sa.motion = clip(100f, 0f, "A");
             var sb = State(sm, "Press " + bsB, 1, 1); sb.motion = clip(0f, 100f, "B");
-            var t = Link(idle, sa); t.AddCondition(AnimatorConditionMode.If, 0, grabA); t.duration = 0.04f;
-            t = Link(idle, sb); t.AddCondition(AnimatorConditionMode.If, 0, grabB); t.duration = 0.04f;
-            t = Link(sa, idle); t.AddCondition(AnimatorConditionMode.IfNot, 0, grabA); t.duration = 0.08f;
-            t = Link(sb, idle); t.AddCondition(AnimatorConditionMode.IfNot, 0, grabB); t.duration = 0.08f;
+            foreach (var t in LinkOnTouch(idle, sa, buttonA)) t.duration = 0.04f;
+            foreach (var t in LinkOnTouch(idle, sb, buttonB)) t.duration = 0.04f;
+            LinkOffTouch(sa, idle, buttonA, 0f).duration = 0.08f;
+            LinkOffTouch(sb, idle, buttonB, 0f).duration = 0.08f;
         }
 
-        // -/+ : a touch = +-10 (limited to 0..200); holding repeats every REPEAT_DELAY
+        // -/+ : ONE step of +-10 per touch (limited to 0..200). No repeat while a finger stays on the button: a finger
+        // resting on a button must not keep raising the power, so every further step needs a new touch.
         static void StepLayer(AnimatorController c, string name, string minus, string plus, string val)
         {
             var sm = Layer(c, name);
             var idle = State(sm, "Idle", 0, 0);
-            var p1 = State(sm, "Plus1", 1, -1);
-            var p2 = State(sm, "Plus2", 2, -1);
-            var m1 = State(sm, "Minus1", 1, 1);
-            var m2 = State(sm, "Minus2", 2, 1);
-            Driver(p1, true).parameters.Add(Add(val, 10f));
-            Driver(p2, true).parameters.Add(Add(val, 10f));
-            Driver(m1, true).parameters.Add(Add(val, -10f));
-            Driver(m2, true).parameters.Add(Add(val, -10f));
-
-            var t = Link(idle, p1); t.AddCondition(AnimatorConditionMode.If, 0, plus); t.AddCondition(AnimatorConditionMode.Less, 191f, val);
-            t = Link(idle, m1); t.AddCondition(AnimatorConditionMode.If, 0, minus); t.AddCondition(AnimatorConditionMode.Greater, 9f, val);
-            foreach (var s in new[] { p1, p2 }) { t = Link(s, idle); t.AddCondition(AnimatorConditionMode.IfNot, 0, plus); }
-            foreach (var s in new[] { m1, m2 }) { t = Link(s, idle); t.AddCondition(AnimatorConditionMode.IfNot, 0, minus); }
-            foreach (var pr in new[] { new[] { p1, p2 }, new[] { p2, p1 } })
-            {
-                t = Link(pr[0], pr[1]); t.hasExitTime = true; t.exitTime = REPEAT_DELAY;
-                t.AddCondition(AnimatorConditionMode.If, 0, plus); t.AddCondition(AnimatorConditionMode.Less, 191f, val);
-            }
-            foreach (var pr in new[] { new[] { m1, m2 }, new[] { m2, m1 } })
-            {
-                t = Link(pr[0], pr[1]); t.hasExitTime = true; t.exitTime = REPEAT_DELAY;
-                t.AddCondition(AnimatorConditionMode.If, 0, minus); t.AddCondition(AnimatorConditionMode.Greater, 9f, val);
-            }
+            var p = State(sm, "Plus", 1, -1);
+            var m = State(sm, "Minus", 1, 1);
+            Driver(p, true).parameters.Add(Add(val, 10f));
+            Driver(m, true).parameters.Add(Add(val, -10f));
+            foreach (var t in LinkOnTouch(idle, p, plus)) t.AddCondition(AnimatorConditionMode.Less, 191f, val);
+            foreach (var t in LinkOnTouch(idle, m, minus)) t.AddCondition(AnimatorConditionMode.Greater, 9f, val);
+            LinkOffTouch(p, idle, plus, TOUCH_DEBOUNCE);
+            LinkOffTouch(m, idle, minus, TOUCH_DEBOUNCE);
         }
 
         // ---------------------------------------------------------------- display

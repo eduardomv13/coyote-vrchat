@@ -13,6 +13,7 @@ using UnityEngine;
 using VRC.Dynamics;
 using VRC.SDK3.Avatars.Components;
 using VRC.SDK3.Dynamics.Constraint.Components;
+using VRC.SDK3.Dynamics.Contact.Components;
 using VRC.SDK3.Dynamics.PhysBone.Components;
 using static CoyotePanel.Editor.Names;
 using static CoyotePanel.Editor.PanelLayout;
@@ -162,17 +163,18 @@ namespace CoyotePanel.Editor
             for (int i = 0; i < 3; i++)   // F_Digit_O stays fixed on the material's "0" (frequency is always a multiple of 10)
                 Mesh2(content, "F_Digit_" + "HTO"[i], assets.quad, assets.matDigit, new Vector3(FDIG_X[i], ROW_F, Z_FACE), new Vector3(CELL_W, CELL_H, 1f));
 
-            // PhysBones: bar grips (stretch when grabbed) and buttons (_IsGrabbed = pressed)
-            AddPb(content, "A_Grip", new Vector3(BAR_X0, ROW_A, Z_PB), PB_REST, PB_GRIP_RADIUS, PFX_A, PB_MAX_STRETCH, assets.cube, assets.matGold, true);
-            AddPb(content, "B_Grip", new Vector3(BAR_X0, ROW_B, Z_PB), PB_REST, PB_GRIP_RADIUS, PFX_B, PB_MAX_STRETCH, assets.cube, assets.matGold, true);
-            // buttons: same kind of PhysBone as the grips (12 mm segment with stretch), centered on the symbol
-            float hb = PB_REST / 2f;
-            AddPb(content, "A_Minus", new Vector3(MINUS_X - hb, ROW_A, Z_PB), PB_REST, PB_BTN_RADIUS, PFX_AMINUS, PB_BTN_STRETCH, null, null);
-            AddPb(content, "A_Plus", new Vector3(PLUS_X - hb, ROW_A, Z_PB), PB_REST, PB_BTN_RADIUS, PFX_APLUS, PB_BTN_STRETCH, null, null);
-            AddPb(content, "B_Minus", new Vector3(MINUS_X - hb, ROW_B, Z_PB), PB_REST, PB_BTN_RADIUS, PFX_BMINUS, PB_BTN_STRETCH, null, null);
-            AddPb(content, "B_Plus", new Vector3(PLUS_X - hb, ROW_B, Z_PB), PB_REST, PB_BTN_RADIUS, PFX_BPLUS, PB_BTN_STRETCH, null, null);
-            AddPb(content, "F_Down", new Vector3(BTN_DN_X - hb, ROW_F, Z_PB), PB_REST, PB_FBTN_RADIUS, PFX_DN, PB_BTN_STRETCH, null, null);
-            AddPb(content, "F_Up", new Vector3(BTN_UP_X - hb, ROW_F, Z_PB), PB_REST, PB_FBTN_RADIUS, PFX_UP, PB_BTN_STRETCH, null, null);
+            // PhysBone grips: stretch when grabbed (one long bone per grip, see the note in PanelLayout.cs)
+            AddGrip(content, "A_Grip", ROW_A, PFX_A, assets.cube, assets.matGold);
+            AddGrip(content, "B_Grip", ROW_B, PFX_B, assets.cube, assets.matGold);
+            // Touch buttons: contact receivers fed by the avatars' fingertips. The wearer's own fingers count, except those
+            // of the hand that holds the panel (they are always near it); every finger of other players counts.
+            string selfTag = o.hand == PanelHand.Left ? "FingerR" : "FingerL";
+            AddTouch(content, "A_Minus", new Vector3(MINUS_X, ROW_A, TOUCH_Z), TB_AMINUS, selfTag);
+            AddTouch(content, "A_Plus", new Vector3(PLUS_X, ROW_A, TOUCH_Z), TB_APLUS, selfTag);
+            AddTouch(content, "B_Minus", new Vector3(MINUS_X, ROW_B, TOUCH_Z), TB_BMINUS, selfTag);
+            AddTouch(content, "B_Plus", new Vector3(PLUS_X, ROW_B, TOUCH_Z), TB_BPLUS, selfTag);
+            AddTouch(content, "F_Down", new Vector3(BTN_DN_X, ROW_F, TOUCH_Z), TB_DN, selfTag);
+            AddTouch(content, "F_Up", new Vector3(BTN_UP_X, ROW_F, TOUCH_Z), TB_UP, selfTag);
 
             // ------------------------------------------------ animator FX
             var ctrl = PanelController.Build(dir + "/CoyotePanel_FX.controller");
@@ -289,17 +291,16 @@ namespace CoyotePanel.Editor
             return g;
         }
 
-        // One-ended PhysBone: fixed root + a "Tip" that moves away from rest when grabbed.
-        // With maxStretch>0 it becomes a slider grip (_Stretch 0-1); without stretch it becomes a button (_IsGrabbed).
-        static void AddPb(GameObject parent, string name, Vector3 rootPos, float restLen, float radius, string prefix,
-            float maxStretch, Mesh knobMesh, Material knobMat, bool poseable = false)
+        // A slider grip: one long PhysBone bone lying along the bar. Its root is PB_ROOT_DISTANCE to the left of the bar and
+        // its tip (carrying the knob) rests PB_REST from the bar's minimum end; grabbing and pulling toward the right
+        // stretches it (_Stretch 0-1). Because the bone is long, only the SIDEWAYS part of a pull counts (see PanelLayout.cs).
+        static void AddGrip(GameObject parent, string name, float row, string prefix, Mesh knobMesh, Material knobMat)
         {
             var root = Child(parent, name);
-            root.transform.localPosition = rootPos;
+            root.transform.localPosition = new Vector3(BAR_X0 + PB_REST - PB_ROOT_DISTANCE, row, Z_PB);
             var tip = Child(root, "Tip");
-            tip.transform.localPosition = new Vector3(restLen, 0f, 0f);
-            if (knobMesh != null)
-                Mesh2(tip, "Knob", knobMesh, knobMat, Vector3.zero, new Vector3(KNOB_W, KNOB_H, KNOB_D));
+            tip.transform.localPosition = new Vector3(PB_ROOT_DISTANCE, 0f, 0f);
+            Mesh2(tip, "Knob", knobMesh, knobMat, Vector3.zero, new Vector3(KNOB_W, KNOB_H, KNOB_D));
             var pb = root.AddComponent<VRCPhysBone>();
             pb.rootTransform = root.transform;
             pb.integrationType = VRCPhysBoneBase.IntegrationType.Simplified;
@@ -310,22 +311,52 @@ namespace CoyotePanel.Editor
             pb.immobileType = VRCPhysBoneBase.ImmobileType.AllMotion;
             pb.immobile = 1f;
             pb.allowCollision = VRCPhysBoneBase.AdvancedBool.False;
-            pb.radius = radius;
-            pb.limitType = VRCPhysBoneBase.LimitType.Angle;   // only stretches along the bar axis
-            pb.maxAngleX = 2f;
+            pb.radius = PB_GRIP_RADIUS;
+            pb.limitType = VRCPhysBoneBase.LimitType.Angle;   // (almost) no rotation: the knob only slides along the bar axis
+            pb.maxAngleX = PB_ANGLE_LIMIT;
             pb.allowGrabbing = VRCPhysBoneBase.AdvancedBool.True;
             var gf = pb.grabFilter; gf.allowSelf = true; gf.allowOthers = true; pb.grabFilter = gf;
             // poseable grips: grab, then pull the trigger/click to LOCK the grip where it is (VRChat "Pose")
-            pb.allowPosing = poseable ? VRCPhysBoneBase.AdvancedBool.True : VRCPhysBoneBase.AdvancedBool.False;
+            pb.allowPosing = VRCPhysBoneBase.AdvancedBool.True;
             var pf = pb.poseFilter; pf.allowSelf = true; pf.allowOthers = true; pb.poseFilter = pf;
             pb.grabMovement = 1f;
             pb.snapToHand = false;
-            pb.maxStretch = maxStretch;
-            pb.maxSquish = 0f;
+            pb.maxStretch = PB_MAX_STRETCH;
+            pb.maxSquish = 0f;                // a pull toward the root changes nothing
             pb.stretchMotion = 0f;
             pb.isAnimated = false;
             pb.resetWhenDisabled = true;     // hiding/showing the panel resets the simulation
             pb.parameter = prefix;
+        }
+
+        // A touch button: two sphere contact receivers on the same spot, both local only (they cost nothing in the
+        // avatar's performance rank) and both "Constant" (the bool is on while a fingertip is inside).
+        //   Self   : the wearer's own fingers, with the tag of the hand that does NOT hold the panel (FingerR when held in the left hand)
+        //   Others : any finger ("Finger") of another player
+        static void AddTouch(GameObject parent, string name, Vector3 pos, string button, string selfTag)
+        {
+            var g = Child(parent, name);
+            g.transform.localPosition = pos;
+            AddReceiver(g, "Self", TouchSelf(button), selfTag, true, false);
+            AddReceiver(g, "Others", TouchOthers(button), "Finger", false, true);
+        }
+
+        static void AddReceiver(GameObject parent, string name, string parameter, string tag, bool allowSelf, bool allowOthers)
+        {
+            var g = Child(parent, name);
+            var r = g.AddComponent<VRCContactReceiver>();
+            r.rootTransform = g.transform;
+            r.shapeType = ContactBase.ShapeType.Sphere;
+            r.radius = TOUCH_RADIUS;
+            r.position = Vector3.zero;
+            r.rotation = Quaternion.identity;
+            r.collisionTags = new List<string> { tag };
+            r.receiverType = ContactReceiver.ReceiverType.Constant;
+            r.parameter = parameter;
+            r.allowSelf = allowSelf;
+            r.allowOthers = allowOthers;
+            r.localOnly = true;
+            r.minVelocity = 0f;
         }
 
         static ParameterConfig Par(string name, ParameterSyncType type, bool localOnly, float def)
