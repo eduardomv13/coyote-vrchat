@@ -1,0 +1,73 @@
+name: Release exe
+
+# Builds CoyoteVRChat.exe on a clean Windows runner from the tagged source and attaches it, with its SHA-256, to the GitHub
+# release. It runs when a release is published; "Run workflow" repeats it for a tag that already has a release.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of an existing release to build and attach the .exe to (for example v1.2.0)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  exe:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the build tools
+        run: python -m pip install -r requirements.txt pyinstaller
+
+      - name: Run the tests
+        run: python -m unittest
+
+      - name: Build the .exe
+        run: python -m PyInstaller coyote_vrchat.spec --noconfirm --clean
+
+      - name: Check the .exe
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          # A window program: piping its output makes PowerShell wait for it and show what it printed.
+          $version = (& dist\CoyoteVRChat.exe --version | Out-String).Trim()
+          $expected = "Coyote x VRChat $($env:TAG.TrimStart('v'))"
+          Write-Host "--version says: $version"
+          if ($version -ne $expected) { throw "The tag is $env:TAG but the program says '$version' (expected '$expected'). Fix coyote_vrc/__init__.py." }
+
+          $selftest = (& dist\CoyoteVRChat.exe --selftest | Out-String)
+          Write-Host $selftest
+          if ($LASTEXITCODE -ne 0) { throw "--selftest failed" }
+
+          $init = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}'
+          $mcp = ($init | & dist\CoyoteVRChat.exe --mcp | Out-String)
+          Write-Host $mcp
+          if ($mcp -notmatch '"name"\s*:\s*"coyote-vrchat"') { throw "--mcp did not answer the MCP handshake" }
+
+      - name: Attach to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $name = "CoyoteVRChat-$($env:TAG.TrimStart('v')).exe"
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item dist\CoyoteVRChat.exe "release\$name"
+          $hash = (Get-FileHash "release\$name" -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("$PWD\release\SHA256SUMS.txt", "$hash *$name`n")
+          gh release upload $env:TAG "release\$name" "release\SHA256SUMS.txt" --clobber --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
+          "SHA-256 of ${name}: $hash" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY

@@ -99,6 +99,25 @@ class Options(unittest.TestCase):
         server.assert_called_once_with()
 
 
+class ConsoleOfTheExe(unittest.TestCase):
+    def test_a_file_or_a_pipe_is_never_replaced_by_the_console(self):
+        main = importlib.import_module("main")
+        self.assertTrue(main._is_redirect(1))      # FILE_TYPE_DISK: > out.txt
+        self.assertTrue(main._is_redirect(3))      # FILE_TYPE_PIPE: | more
+        self.assertFalse(main._is_redirect(2))     # FILE_TYPE_CHAR: a console
+        self.assertFalse(main._is_redirect(0))     # FILE_TYPE_UNKNOWN: no usable output at all (a GUI start from a terminal)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows only")
+    def test_the_ancestors_start_with_the_parent(self):
+        main = importlib.import_module("main")
+        pids = main._ancestor_pids()
+        self.assertTrue(pids)
+        self.assertTrue(all(isinstance(p, int) and p > 0 for p in pids))
+        self.assertEqual(pids[0], os.getppid())
+        self.assertNotIn(os.getpid(), pids)
+        self.assertLessEqual(len(pids), 4)
+
+
 class McpCommandOfTheExe(unittest.TestCase):
     def test_from_source_it_is_python_and_the_script(self):
         command, args = mcp_register.mcp_launcher("C:/app/coyote_mcp.py")

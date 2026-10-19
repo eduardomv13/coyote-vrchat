@@ -9,8 +9,11 @@ Unity (`unity/`) has its own version number, listed in [its changelog](unity/io.
 - **A Windows program in one file**: `CoyoteVRChat-1.2.0.exe` runs with a double-click, no Python needed. It opens only the
   window (no console), shows the logo in the title bar, the taskbar and the file icon, and carries Windows version
   information. About 13 MB. Built with PyInstaller (`build_exe.bat`, recipe in `coyote_vrchat.spec`; UPX is off on purpose).
+- The file is built by GitHub Actions on a clean Windows machine when a release is published
+  (`.github/workflows/release-exe.yml`: tests, then `--version`/`--selftest`/MCP checks, then it is attached together with
+  `SHA256SUMS.txt`), so the build log is public.
 - The file is **not code-signed**, so Windows SmartScreen asks for *More info → Run anyway* and some antivirus programs may
-  complain. The release lists the file's SHA-256 (`SHA256SUMS.txt`).
+  complain. Compare it with `SHA256SUMS.txt`.
 - **Temporary logo**: an original black-and-gold wolf's head drawn by `tools/make_icon.py` (not DG-LAB's artwork). Replace
   `assets/coyote.ico` and `assets/coyote.png` to change it.
 - New options, for the `.exe` and for `python main.py`: `--selftest` (checks the logo, the window library, Windows Bluetooth
@@ -21,7 +24,9 @@ Unity (`unity/`) has its own version number, listed in [its changelog](unity/io.
   Microsoft-Store Python (Windows keeps those in a private folder the `.exe` cannot see), so the ceilings and the API token do
   not silently go back to the defaults.
 - The taskbar groups the program under its own identity and logo instead of under Python.
-- 255 automated tests (it was 237).
+- When started from a terminal, `--version`/`--selftest`/`--help` print into that terminal (also from the one-file layout,
+  where the program runs in a child process), and leave a redirected output (`> file`, `| more`) alone.
+- 257 automated tests (it was 237).
 
 ## 1.1.0 (2026-10-19)
 

@@ -13,6 +13,7 @@ Usage:
 The packaged CoyoteVRChat.exe takes the same options (without "python main.py").
 """
 import argparse
+import os
 import sys
 import time
 
@@ -41,15 +42,65 @@ def _set_app_id():
         pass
 
 
+_FILE_TYPE_DISK, _FILE_TYPE_PIPE = 1, 3
+
+
+def _is_redirect(file_type: int) -> bool:
+    """GetFileType() of the standard output: a file (`> out.txt`) or a pipe (`| more`) must be left exactly as it is."""
+    return file_type in (_FILE_TYPE_DISK, _FILE_TYPE_PIPE)
+
+
+def _ancestor_pids(limit: int = 4) -> list:
+    """The process ids of the parent, grandparent... of this process (Windows). The one-file .exe runs the program in a
+    CHILD of the process the terminal started, so the terminal's shell is the grandparent, not the parent."""
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", wintypes.LONG), ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", wintypes.WCHAR * 260)]
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)                      # TH32CS_SNAPPROCESS
+    parents = {}
+    try:
+        entry = ProcessEntry()
+        entry.dwSize = ctypes.sizeof(entry)
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            parents[entry.th32ProcessID] = entry.th32ParentProcessID
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    found, pid = [], os.getpid()
+    for _ in range(limit):
+        pid = parents.get(pid)
+        if not pid:
+            break
+        found.append(pid)
+    return found
+
+
 def _attach_parent_console():
     """The packaged .exe has no console of its own (so double-clicking it shows only the window). When it is started from
-    a terminal with an option that prints (--help, --selftest, --headless, --version), print into that terminal."""
+    a terminal with an option that prints (--help, --selftest, --headless, --version), print into that terminal -- unless
+    the output is already going to a file or a pipe (`CoyoteVRChat.exe --version > v.txt`, `... | more`, an MCP client)."""
     if sys.platform != "win32":
         return
     try:
         import ctypes
+        from ctypes import wintypes
 
-        if not ctypes.windll.kernel32.AttachConsole(-1):    # ATTACH_PARENT_PROCESS
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetStdHandle.restype = wintypes.HANDLE
+        kernel32.GetFileType.argtypes = [wintypes.HANDLE]
+        if _is_redirect(kernel32.GetFileType(kernel32.GetStdHandle(-11))):    # STD_OUTPUT_HANDLE
+            return
+        # ATTACH_PARENT_PROCESS (-1) is tried first; then the ancestors, because of the one-file layout described above
+        if not any(kernel32.AttachConsole(pid) for pid in [-1] + _ancestor_pids()):
             return
         sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
         sys.stderr = sys.stdout

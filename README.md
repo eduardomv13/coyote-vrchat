@@ -56,7 +56,7 @@ an intensity ceiling, a latched emergency stop, and an optional watchdog. Detail
 - An optional **in-game control panel for your avatar** (sliders, buttons, frequency; a Unity package that installs with
   Modular Avatar). It is a separate piece: see [unity/README.md](unity/README.md).
 - **One file to run**: `CoyoteVRChat.exe` (no Python needed), with its own logo. See [Install](#1-install).
-- 255 automated tests (protocol, Bluetooth with a simulated Coyote, OSC, API, MCP, interface logic, the shock trigger,
+- 257 automated tests (protocol, Bluetooth with a simulated Coyote, OSC, API, MCP, interface logic, the shock trigger,
   the packaging, and checks on the Unity package that do not need Unity).
 
 **Tested on:** Windows 11, a real Coyote 3.0, and VRChat on PC. The automated tests use a simulated Coyote. Other
@@ -89,7 +89,9 @@ Things to know about the `.exe`:
   folder; the first time the `.exe` starts without settings of its own, it copies them over once, so your ceilings and
   your API token do not silently go back to the defaults.
 - `CoyoteVRChat.exe --selftest` (from a terminal) checks that everything the program needs is present and that Windows
-  Bluetooth answers, then exits. `--version` prints the version. The other options are listed below.
+  Bluetooth answers, then exits. `--version` prints the version. The other options are listed below. A window program gives
+  the prompt back at once, so the text may show up after it; add `| more` (`CoyoteVRChat.exe --selftest | more`) to wait for
+  it, or `> result.txt` to save it.
 - It is the same program as the Python version, packaged with PyInstaller. It does not download anything when it runs.
 
 ### Running it from the source (Python)
@@ -328,8 +330,15 @@ It makes a separate `.venv-build` folder, installs the dependencies and PyInstal
 The recipe is `coyote_vrchat.spec`. UPX compression is deliberately **off**, because compressed programs are flagged by
 antivirus software much more often. Check the result with `dist\CoyoteVRChat.exe --selftest`.
 
-What the tests do **not** cover: that PyInstaller really produces a working `.exe`. Each release's `.exe` was built and
-opened (window, logo, `--version`, `--selftest`, `--mcp`) before publishing, on Windows 11. The logo is drawn by
+**Where the files on the Releases page come from.** They are not built on a personal computer: publishing a release
+triggers `.github/workflows/release-exe.yml`, which builds the `.exe` on a clean GitHub Windows machine from the tagged
+source, runs the tests, checks that `--version` matches the tag and that `--selftest` and the MCP handshake work, and then
+attaches `CoyoteVRChat-<version>.exe` and `SHA256SUMS.txt` to the release. (To repeat it for an existing release, use
+*Actions → Release exe → Run workflow* with the tag.) The log of each build is public, so you can see exactly what
+produced the file.
+
+What the tests do **not** cover: that PyInstaller really produces a working `.exe` that looks right. The window, the logo
+and the three options were checked by opening the program on Windows 11 before each release. The logo is drawn by
 `tools/make_icon.py` (needs Pillow: `pip install pillow`), which rewrites `assets/coyote.ico` and `assets/coyote.png`.
 
 ```
