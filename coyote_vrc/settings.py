@@ -60,6 +60,7 @@ class Settings:
     chatbox_host: str = "127.0.0.1"
     chatbox_port: int = 9000          # VRChat listens for OSC input here (its output goes to 9001)
     chatbox_text: str = "Shock {percent}%"   # {percent} and {seconds} are replaced
+    chatbox_clear_s: int = 3          # remove the message from the chatbox after this many seconds (0 = leave it to VRChat)
     # --- AI
     ai_enabled: bool = False          # NOT persisted: always starts off
     ai_cap: int = 50                  # maximum intensity the AI may request
@@ -90,6 +91,9 @@ class Settings:
         self.chatbox_port = _clamp_int(self.chatbox_port, 1, 65535, 9000)
         self.chatbox_host = str(self.chatbox_host or "127.0.0.1").strip() or "127.0.0.1"
         self.chatbox_text = str(self.chatbox_text if self.chatbox_text is not None else "")[:100]
+        self.chatbox_clear_s = _clamp_int(self.chatbox_clear_s, 0, 60, 3)
+        if 0 < self.chatbox_clear_s < 2:      # VRChat drops messages that follow each other faster than ~1.6 s
+            self.chatbox_clear_s = 2
         self.shock_enabled = bool(self.shock_enabled)
         self.chatbox_enabled = bool(self.chatbox_enabled)
         try:

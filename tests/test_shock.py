@@ -32,6 +32,35 @@ class FakeClock:
         self.t += dt
 
 
+class FakeHandle:
+    def __init__(self, delay, fn):
+        self.delay, self.fn, self.cancelled, self.fired = delay, fn, False, False
+
+    def cancel(self):
+        self.cancelled = True
+
+    def fire(self):
+        """Runs the callback the way the timer would, unless it was cancelled."""
+        if not self.cancelled:
+            self.fired = True
+            self.fn()
+
+
+class FakeScheduler:
+    """Stands in for threading.Timer: nothing runs until a test fires the handle."""
+
+    def __init__(self):
+        self.handles = []
+
+    def __call__(self, delay, fn):
+        handle = FakeHandle(delay, fn)
+        self.handles.append(handle)
+        return handle
+
+    def pending(self):
+        return [h for h in self.handles if not h.cancelled and not h.fired]
+
+
 class ShockCase(unittest.TestCase):
     """A connected (simulated) Coyote, the trigger switched on, a fixed 40% power for 5 s, a 10 s pause."""
 
@@ -56,6 +85,8 @@ class ShockCase(unittest.TestCase):
         self.engine = Engine(settings=s, settings_path=self.path, transport=SimulatedTransport())
         self.engine.control._clock = self.clock
         self.engine.shock._clock = self.clock
+        self.sched = FakeScheduler()
+        self.engine.shock._schedule = self.sched
         self.engine.link.state = "connected"      # as if the Coyote were connected
         self.ctl = self.engine.control
 
@@ -194,7 +225,8 @@ class RefusalTests(ShockCase):
         self.engine.emergency_stop("gui")
         self.assertEqual(self.out(), (0.0, 0.0))
         self.assertFalse(self.ctl.shock_active())
-        self.chat()                                                # the announcement of the first shock
+        self.assertEqual(self.chat()[1][0], "Shock 40%")           # the announcement of the first shock...
+        self.assertEqual(self.chat(), ("/chatbox/input", ["", True, False]))   # ...and STOP takes it off the screen
         self.clock.advance(60)
         self.tap()
         self.assertEqual(self.out(), (0.0, 0.0))
@@ -340,6 +372,7 @@ class ChatboxTests(ShockCase):
         self.assertTrue(self.engine.test_chatbox())
         self.assertEqual(self.chat(), ("/chatbox/input", ["Shock 40% (test)", True, False]))
         self.assertFalse(self.ctl.shock_active())                  # a chatbox test never shocks
+        self.assertEqual([h.delay for h in self.sched.pending()], [3])      # and it is cleared like a real message
 
     def test_a_failing_send_is_logged_not_raised(self):
         def boom(*args, **kwargs):
@@ -357,6 +390,11 @@ class SettingsTests(ShockCase):
                          ("ShockOsc/_all", False, 10, 30, 3))
         self.assertEqual((d.shock_cooldown_s, d.shock_channels, d.chatbox_enabled, d.chatbox_port, d.chatbox_text),
                          (10, "AB", True, 9000, "Shock {percent}%"))
+        self.assertEqual(d.chatbox_clear_s, 3)
+
+    def test_clear_seconds_validation(self):
+        for given, expected in ((0, 0), (1, 2), (2, 2), (3, 3), (60, 60), (99, 60), (-4, 0), ("abc", 3)):
+            self.assertEqual(Settings(chatbox_clear_s=given).validate().chatbox_clear_s, expected, given)
 
     def test_validation_clamps_and_orders(self):
         s = Settings(shock_min_pct=80, shock_max_pct=20, shock_seconds=99, shock_cooldown_s=-5, shock_channels="ba",
@@ -406,8 +444,143 @@ class SettingsTests(ShockCase):
         self.assertFalse(st["active"])
         self.assertEqual(st["cooldown_s"], 9.0)                   # 15 s since the touch, 6 s passed
 
+    def test_status_reports_touches_and_ignored_touches(self):
+        st = self.engine.shock_status()
+        self.assertEqual((st["touch_age_s"], st["ignored_age_s"], st["ignored_count"], st["ignored_reason"]),
+                         (None, None, 0, ""))
+        self.engine.link.state = "disconnected"
+        self.clock.advance(5)
+        self.tap()                                                 # a touch that cannot fire
+        self.clock.advance(7)
+        st = self.engine.shock_status()
+        self.assertEqual((st["touch_age_s"], st["ignored_age_s"], st["ignored_count"]), (7.0, 7.0, 1))
+        self.assertEqual(st["ignored_reason"], "the Coyote is not connected")
+        self.assertFalse(st["connected"])
+
+    def test_enabling_the_trigger_connects_the_coyote_if_nothing_is_connected(self):
+        calls = []
+        self.engine.connect = lambda *a, **k: calls.append(1)
+        self.engine.set_shock_enabled(False)
+        self.engine.link.state = "disconnected"
+        self.engine.set_shock_enabled(True)
+        self.assertEqual(calls, [1])
+        self.assertTrue(self.logged("connecting now"))
+        for state in ("connected", "connecting", "searching", "reconnecting"):
+            self.engine.set_shock_enabled(False)
+            self.engine.link.state = state
+            self.engine.set_shock_enabled(True)
+        self.assertEqual(calls, [1])                               # it only asks when nothing is connected or on its way
+
     def test_snapshot_carries_the_shock_for_the_status_api(self):
         self.assertEqual(self.ctl.snapshot()["shock"], {"active": False, "remaining_s": 0.0, "level": {"A": 0.0, "B": 0.0}})
+
+
+class ChatboxClearTests(ShockCase):
+    """The message is removed again a few seconds later (an empty /chatbox/input, which is what chatbox tools do)."""
+
+    def test_the_message_is_cleared_after_the_configured_seconds(self):
+        self.tap()
+        self.assertEqual(self.chat()[1][0], "Shock 40%")
+        pending = self.sched.pending()
+        self.assertEqual([h.delay for h in pending], [3])
+        self.assertIsNone(self.chat())                             # nothing is removed before the time is up
+        self.clock.advance(3.0)
+        pending[0].fire()
+        self.assertEqual(self.chat(), ("/chatbox/input", ["", True, False]))
+        self.assertTrue(self.logged("Chatbox: cleared"))
+        pending[0].fn()                                            # a second call (a timer race) sends nothing more
+        self.assertIsNone(self.chat())
+
+    def test_the_delay_is_configurable_and_zero_means_never(self):
+        self.engine.configure_shock(chatbox_clear_s=8)
+        self.tap()
+        self.assertEqual([h.delay for h in self.sched.pending()], [8])
+        first = self.sched.pending()[0]
+        self.chat()
+        self.ctl.stop_shock()
+        self.clock.advance(60)
+        self.engine.configure_shock(chatbox_clear_s=0)
+        self.tap()
+        self.chat()
+        self.assertTrue(first.cancelled)                           # the new message replaced the old one...
+        self.assertEqual(self.sched.pending(), [])                 # ...and no timer was scheduled for it
+        self.engine.emergency_stop("gui")
+        self.assertIsNone(self.chat())                             # with clearing off the message is left alone
+
+    def test_a_newer_message_makes_the_older_clear_stale(self):
+        self.engine.configure_shock(shock_cooldown_s=0, shock_seconds=1)
+        self.tap()
+        first = self.sched.pending()[0]
+        self.clock.advance(2.0)
+        self.out()
+        self.tap()                                                 # 2 s later: not too fast, a second message
+        self.assertTrue(first.cancelled)
+        self.chat()
+        self.chat()                                                # the two announcements
+        first.fn()                                                 # a timer that had already started: sends nothing
+        self.assertIsNone(self.chat())
+        self.sched.pending()[0].fire()
+        self.assertEqual(self.chat(), ("/chatbox/input", ["", True, False]))
+
+    def test_a_message_skipped_for_speed_leaves_the_pending_clear_alone(self):
+        self.engine.configure_shock(shock_cooldown_s=0, shock_seconds=1)
+        self.tap()
+        first = self.sched.pending()[0]
+        self.clock.advance(1.1)
+        self.out()
+        self.tap()                                                 # too fast: not announced
+        self.assertFalse(first.cancelled)
+        self.chat()
+        first.fire()
+        self.assertEqual(self.chat(), ("/chatbox/input", ["", True, False]))
+
+    def test_a_new_shock_right_after_a_clear_is_too_fast_to_announce(self):
+        self.engine.configure_shock(shock_cooldown_s=0, shock_seconds=1)
+        self.tap()
+        handle = self.sched.pending()[0]
+        self.chat()
+        self.clock.advance(3.0)
+        self.out()
+        handle.fire()
+        self.assertEqual(self.chat(), ("/chatbox/input", ["", True, False]))
+        self.clock.advance(0.5)
+        self.tap()                                                 # 0.5 s after the clear: VRChat would drop it
+        self.assertTrue(self.ctl.shock_active())
+        self.assertIsNone(self.chat())
+        self.assertTrue(self.logged("message skipped"))
+
+    def test_stop_removes_the_message_at_once_and_cancels_the_timer(self):
+        self.tap()
+        handle = self.sched.pending()[0]
+        self.chat()
+        self.engine.emergency_stop("gui")
+        self.assertEqual(self.chat(), ("/chatbox/input", ["", True, False]))
+        self.assertTrue(handle.cancelled)
+        handle.fn()                                                # a timer that had already started does nothing
+        self.assertIsNone(self.chat())
+
+    def test_switching_the_trigger_off_during_a_shock_removes_the_message(self):
+        self.tap()
+        self.chat()
+        self.engine.set_shock_enabled(False)
+        self.assertEqual(self.chat(), ("/chatbox/input", ["", True, False]))
+
+    def test_closing_the_program_removes_the_message(self):
+        self.tap()
+        self.chat()
+        self.engine.shutdown()
+        self.assertEqual(self.chat(), ("/chatbox/input", ["", True, False]))
+
+    def test_a_failing_clear_is_logged_not_raised(self):
+        self.tap()
+        handle = self.sched.pending()[0]
+        self.chat()
+
+        def boom(*args, **kwargs):
+            raise OSError(10049, "address not available")
+        self.engine.vrc_out.send_chatbox = boom
+        handle.fire()
+        self.assertTrue(self.logged("could not clear"))
 
 
 class ControllerTests(unittest.TestCase):
@@ -446,6 +619,7 @@ class OverTheWire(unittest.TestCase):
         s.shock_enabled = True
         s.shock_min_pct = s.shock_max_pct = 25
         s.shock_seconds = 1
+        s.chatbox_clear_s = 2
         s.chatbox_port = vrc_in.getsockname()[1]
         engine = Engine(settings=s, settings_path=Path(tmp.name) / "s.json", transport=SimulatedTransport())
         engine.link.state = "connected"
@@ -462,6 +636,11 @@ class OverTheWire(unittest.TestCase):
             while engine.control.shock_active() and time.time() < end:
                 time.sleep(0.05)
             self.assertFalse(engine.control.shock_active())       # it ended by itself after 1 s
+            vrc_in.settimeout(4.0)
+            began = time.time()
+            data, _ = vrc_in.recvfrom(4096)                        # and the real timer clears the chatbox after 2 s
+            self.assertEqual(osc.parse_message(data), ("/chatbox/input", ["", True, False]))
+            self.assertGreaterEqual(time.time() - began, 0.3)
         finally:
             sender.close()
             engine.shutdown()

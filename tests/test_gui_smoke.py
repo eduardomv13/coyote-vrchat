@@ -518,10 +518,13 @@ class GuiSmoke(unittest.TestCase):
     # ---- shock trigger (ShockOSC contact)
     def test_shock_enable_asks_for_confirmation_and_shows_in_the_header(self):
         card = self.app.shock
+        asked = []
+        self.engine.connect = lambda *a, **k: asked.append(1)      # the real Bluetooth is not under test here
         fake_mb.answer = False
         card.v_enabled.set(True)
         card._toggle()
         self.assertFalse(self.engine.settings.shock_enabled)
+        self.assertEqual(asked, [])                                # refused: nothing was connected
         self.assertFalse(card.v_enabled.get())
         self.assertEqual(len(fake_mb.asked), 1)
         self.assertIn("ShockOsc/_all", fake_mb.asked[0][1])
@@ -530,6 +533,12 @@ class GuiSmoke(unittest.TestCase):
         card.v_enabled.set(True)
         card._toggle()
         self.assertTrue(self.engine.settings.shock_enabled)
+        self.assertEqual(asked, [1])                               # enabling asked for a Bluetooth connection
+        self.assertIn("connecting", self.app.msg.cget("text"))
+        self.assertIn("connect it", fake_mb.asked[1][1])           # and the confirmation said it would
+        self.refresh()
+        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: NOT READY")   # not connected yet
+        self.engine.link.state = "connected"
         self.refresh()
         self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: armed")
         card.v_enabled.set(False)
@@ -588,26 +597,51 @@ class GuiSmoke(unittest.TestCase):
         card._apply()
         self.assertEqual(self.engine.settings.chatbox_port, old)
         card.vars["chatbox_port"].set("9100")
+        card.vars["chatbox_clear_s"].set("abc")
+        card._apply()
+        self.assertIn("Invalid number of seconds", self.app.msg.cget("text"))
+        card.vars["chatbox_clear_s"].set("61")
+        card._apply()
+        self.assertEqual(self.engine.settings.chatbox_clear_s, 3)
+        card.vars["chatbox_clear_s"].set("1")
+        card.vars["chatbox_port"].set("9100")
+        card._apply()
+        self.assertEqual(self.engine.settings.chatbox_clear_s, 2)          # one second is too fast for VRChat: 2
+        self.assertEqual(card.vars["chatbox_clear_s"].get(), "2")
+        card.vars["chatbox_clear_s"].set("0")
         card.vars["osc_param_shock"].set("  Collar/Touch ")
         card.vars["chatbox_text"].set("Zap {percent}%")
         card._apply()
         s = self.engine.settings
         self.assertEqual((s.chatbox_port, s.osc_param_shock, s.chatbox_text), (9100, "Collar/Touch", "Zap {percent}%"))
+        self.assertEqual(s.chatbox_clear_s, 0)
         self.assertEqual(card.vars["osc_param_shock"].get(), "Collar/Touch")
 
     def test_shock_state_text_follows_the_trigger(self):
         card = self.app.shock
+        self.engine.connect = lambda *a, **k: None      # the real Bluetooth is not under test here
         self.engine.settings.chatbox_enabled = False    # this test is about the window, not the chatbox
         self.refresh()
         self.assertIn("Off", card.lbl_state.cget("text"))
+        self.assertIn("not touched since the program started", card.lbl_touch.cget("text"))
         self.engine.set_shock_enabled(True)
         self.refresh()
         self.assertIn("not connected", card.lbl_state.cget("text"))
+        self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [True])       # a touch that cannot fire
+        self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [False])
+        self.refresh()
+        self.assertIn("Ignored a touch", card.lbl_ignored.cget("text"))
+        self.assertIn("the Coyote is not connected", card.lbl_ignored.cget("text"))
+        self.assertIn("a touch was ignored", self.app.msg.cget("text"))        # also shown at the bottom of the window
+        self.assertEqual(self.app.msg.cget("fg").lower(), gui.RED.lower())
+        self.assertIn("last touched", card.lbl_touch.cget("text"))
+        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: NOT READY")
         self.engine.link.state = "connected"
         self.refresh()
         self.assertIn("waiting for a touch on ShockOsc/_all", card.lbl_state.cget("text"))
         self.assertEqual(card.lbl_state.cget("fg").lower(), gui.GREEN.lower())
         self.assertIn("none yet", card.lbl_last.cget("text"))
+        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: armed")
         self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [True])
         self.refresh()
         self.assertIn("SHOCK", card.lbl_state.cget("text"))
@@ -621,6 +655,7 @@ class GuiSmoke(unittest.TestCase):
     def test_shock_test_buttons(self):
         from coyote_vrc import osc as oscmod
         card = self.app.shock
+        self.engine.connect = lambda *a, **k: None      # the real Bluetooth is not under test here
         vrc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         vrc.bind(("127.0.0.1", 0))
         vrc.settimeout(2.0)
@@ -636,6 +671,7 @@ class GuiSmoke(unittest.TestCase):
             card._test_shock()
             self.assertIn("not connected", self.app.msg.cget("text"))
             self.engine.link.state = "connected"
+            self.engine.shock._last_send = -1e9    # a real VRChat drops a message that follows within 1.6 s; skip that wait
             card._test_shock()
             self.assertIn("Test shock:", self.app.msg.cget("text"))
             self.assertTrue(self.engine.control.shock_active())

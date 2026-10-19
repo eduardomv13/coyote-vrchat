@@ -62,6 +62,7 @@ class Engine:
             pass
         self.stop_osc()
         self.stop_api()
+        self.shock.clear_now()     # do not leave our chatbox message on screen after the program is gone
         self.vrc_out.close()
         self.save()
         self.loop.stop()
@@ -83,6 +84,7 @@ class Engine:
     # ------------------------------------------------------------------ control
     def emergency_stop(self, source: str = "gui") -> None:
         self.control.emergency_stop(source)
+        self.shock.clear_now()     # a "Shock 37%" message must not outlive a shock that was just cancelled
         self.link.poke()
 
     def resume(self) -> None:
@@ -99,7 +101,8 @@ class Engine:
 
     # ------------------------------------------------------------------ shock trigger (ShockOSC contact)
     _SHOCK_KEYS = ("osc_param_shock", "shock_min_pct", "shock_max_pct", "shock_seconds", "shock_cooldown_s",
-                   "shock_channels", "chatbox_enabled", "chatbox_host", "chatbox_port", "chatbox_text")
+                   "shock_channels", "chatbox_enabled", "chatbox_host", "chatbox_port", "chatbox_text",
+                   "chatbox_clear_s")
 
     def set_shock_enabled(self, on: bool) -> None:
         on = bool(on)
@@ -107,8 +110,14 @@ class Engine:
             return
         self.settings.shock_enabled = on
         self.control.log("Shock trigger " + ("ENABLED" if on else "disabled"))
-        if not on:   # also cancel a shock that is running right now
-            self.control.stop_shock("trigger switched off")
+        if on:
+            # Armed means ready: a shock needs the Coyote, so connect it now unless it is connected or on its way.
+            if self.link.state in ("disconnected",):
+                self.control.log("Shock trigger: the Coyote is not connected, connecting now…")
+                self.connect()
+        else:   # also cancel a shock that is running right now
+            if self.control.stop_shock("trigger switched off"):
+                self.shock.clear_now()
             self.link.poke()
 
     def configure_shock(self, **kw) -> set:
@@ -141,7 +150,7 @@ class Engine:
     def test_chatbox(self) -> bool:
         s = self.settings
         text = render_text(s.chatbox_text, (s.shock_min_pct + s.shock_max_pct) // 2, s.shock_seconds)
-        return self.shock.send_chatbox((text + " (test)")[:144])
+        return self.shock.show((text + " (test)")[:144])    # shown like a real one, so it is cleared like a real one
 
     # ------------------------------------------------------------------ OSC
     def _on_osc(self, address: str, args: list) -> None:

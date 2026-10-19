@@ -718,7 +718,11 @@ class ShockCard(Card):
         make_check(b, "Enabled: a touch fires a random shock (always starts off)", self.v_enabled,
                    self._toggle).pack(fill="x")
         self.lbl_state = make_label(b, "", fg=DIM, wraplength=330, justify="left")
-        self.lbl_state.pack(fill="x", pady=(2, 6))
+        self.lbl_state.pack(fill="x", pady=(2, 0))
+        self.lbl_touch = make_label(b, "", fg=DIM, font=(FONT, 9), wraplength=330, justify="left")
+        self.lbl_touch.pack(fill="x")
+        self.lbl_ignored = make_label(b, "", fg=RED, font=(FONT, 9), wraplength=330, justify="left")
+        self.lbl_ignored.pack(fill="x", pady=(0, 6))
 
         self.lbl_power = make_label(b, "", fg=TEXT, wraplength=330, justify="left")
         self.lbl_power.pack(fill="x")
@@ -758,6 +762,7 @@ class ShockCard(Card):
         self.vars = {}
         rows = (("Contact parameter (bool)", "osc_param_shock", 16),
                 ("Chatbox text ({percent}, {seconds})", "chatbox_text", 16),
+                ("Clear the chatbox after (s, 0 = never)", "chatbox_clear_s", 8),
                 ("Chatbox port (VRChat listens on 9000)", "chatbox_port", 8))
         for r, (text, attr, width) in enumerate(rows):
             make_label(grid, text, fg=DIM).grid(row=r, column=0, sticky="w", pady=2)
@@ -817,13 +822,18 @@ class ShockCard(Card):
                 f"({self._units(lo)} to {self._units(hi)}), for {s.shock_seconds} s, on channel(s) {s.shock_channels}, "
                 f"with {s.shock_cooldown_s} s between shocks.\n\n"
                 "The ceiling, the rise limit and STOP ALL still apply. It starts off every time you open the program.\n\n"
+                "A shock needs the Coyote, so if it is not connected the program will try to connect it now.\n\n"
                 "Enable?",
                 parent=self.app,
             )
             if not ok:
                 self.v_enabled.set(False)
                 return
+        was_connected = e.link.state == "connected"
         e.set_shock_enabled(want)
+        if want and not was_connected:
+            self.app.flash("Shock trigger on. The Coyote is not connected yet: connecting… "
+                           "Touches are ignored until the Bluetooth chip says Connected.", GOLD, 12000)
 
     def _on_min(self, v):
         if v > self.s_max.value:
@@ -858,9 +868,17 @@ class ShockCard(Card):
         except ValueError:
             self.app.flash("Invalid chatbox port: use a number from 1 to 65535.", RED)
             return
+        try:
+            clear_s = int(self.vars["chatbox_clear_s"].get().strip())
+            if not 0 <= clear_s <= 60:
+                raise ValueError
+        except ValueError:
+            self.app.flash("Invalid number of seconds to clear the chatbox: use 0 to 60 (0 = never clear).", RED)
+            return
         self.app.engine.configure_shock(
             osc_param_shock=self.vars["osc_param_shock"].get().strip(),
             chatbox_text=self.vars["chatbox_text"].get(),
+            chatbox_clear_s=clear_s,
             chatbox_port=port,
         )
         self._load_fields()
@@ -914,6 +932,14 @@ class ShockCard(Card):
         else:
             set_text(self.lbl_state, f"● Armed: waiting for a touch on {s.osc_param_shock or '(no parameter set)'}", GREEN)
         set_text(self.lbl_last, "Last shock: " + (st["last"] or "none yet"))
+        age = st["touch_age_s"]
+        name = s.osc_param_shock or "the contact"
+        set_text(self.lbl_touch, f"{name}: " + ("not touched since the program started" if age is None
+                                                 else f"last touched {age:.0f} s ago"))
+        if st["ignored_age_s"] is not None and st["ignored_age_s"] < 120:
+            set_text(self.lbl_ignored, f"Ignored a touch {st['ignored_age_s']:.0f} s ago: {st['ignored_reason']}", RED)
+        else:
+            set_text(self.lbl_ignored, "")
 
 
 class LogCard(Card):
@@ -950,6 +976,7 @@ class App(tk.Tk):
         self._estop_shown = None
         self._flash_job = None
         self._log_n = 0
+        self._ignored_seen = 0
         self._refresh_errors = 0
 
         self.title("Coyote × VRChat")
@@ -1109,6 +1136,8 @@ class App(tk.Tk):
         shock = e.shock_status()
         if shock["active"]:
             self.chip_shock.show(RED, "Shock: ACTIVE")
+        elif shock["enabled"] and (not shock["connected"] or shock["estopped"]):
+            self.chip_shock.show(RED, "Shock trigger: NOT READY")
         elif shock["enabled"]:
             self.chip_shock.show(GOLD, "Shock trigger: armed")
         else:
@@ -1121,6 +1150,9 @@ class App(tk.Tk):
         self.pat.refresh(snap["pattern"])
         self.limits.refresh(lim)
         self.shock.refresh(shock, lim)
+        if shock["ignored_count"] != self._ignored_seen:    # a new touch that did not fire: say so where it is seen
+            self._ignored_seen = shock["ignored_count"]
+            self.flash("Shock trigger: a touch was ignored — " + shock["ignored_reason"], RED, 10000)
         api = e.api
         self.ai.refresh(lim, snap["ai_last_action"], api is not None, e.api_error,
                         api.port if api is not None else e.settings.api_port)
