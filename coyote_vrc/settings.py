@@ -54,7 +54,6 @@ class Settings:
     shock_min_pct: int = 10           # the power is drawn at random between these two, in % of the intensity ceiling
     shock_max_pct: int = 30
     shock_seconds: int = 3            # how long one shock lasts (1..30)
-    shock_cooldown_s: int = 10        # pause after a shock before the next one can start (0..120)
     shock_channels: str = "AB"        # "A", "B" or "AB"
     chatbox_enabled: bool = True      # say the power in the VRChat chatbox when a shock starts
     chatbox_host: str = "127.0.0.1"
@@ -85,7 +84,6 @@ class Settings:
         if self.shock_min_pct > self.shock_max_pct:
             self.shock_min_pct, self.shock_max_pct = self.shock_max_pct, self.shock_min_pct
         self.shock_seconds = _clamp_int(self.shock_seconds, 1, 30, 3)
-        self.shock_cooldown_s = _clamp_int(self.shock_cooldown_s, 0, 120, 10)
         letters = "".join(c for c in "AB" if c in str(self.shock_channels).upper())
         self.shock_channels = letters or "AB"
         self.chatbox_port = _clamp_int(self.chatbox_port, 1, 65535, 9000)

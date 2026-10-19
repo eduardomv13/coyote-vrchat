@@ -8,7 +8,7 @@ seconds later).
 
 Safety (the device delivers shocks, and here OTHER PLAYERS pull the trigger):
   * it is off every time the program starts and has to be switched on in the window;
-  * one shock per touch (a contact that stays on does not repeat), then a pause before the next one can start;
+  * one shock per touch: a contact that stays on does not repeat, and a touch while a shock is running is ignored;
   * the power is a percentage of the intensity ceiling, and the controller applies the ceiling, the rise limit and the
     latched emergency stop exactly as for every other source (see control.py: a shock is only a temporary MINIMUM level);
   * nothing happens, and nothing is announced, unless the Coyote is connected and the emergency stop is not active.
@@ -57,7 +57,6 @@ class ShockTrigger:
         self._schedule = schedule
         self._lock = threading.Lock()
         self._prev_on = False
-        self._cooldown_until = 0.0
         self._last_send = -1e9           # when the last chatbox message of ANY kind went out
         self._chat_gen = 0               # bumped for every message we put on screen: a stale clear must do nothing
         self._chat_visible = False       # our message is (as far as we know) still on screen
@@ -96,13 +95,8 @@ class ShockTrigger:
             return refuse("the emergency stop is active")
         if not self._is_connected():
             return refuse("the Coyote is not connected")
-        now = self._clock()
         if ctl.shock_active():
             return refuse("a shock is already running")
-        with self._lock:
-            wait = self._cooldown_until - now
-        if wait > 0:
-            return refuse(f"pausing between shocks ({wait:.0f} s left)")
         cap = ctl.cap("gui")
         if cap <= 0:
             return refuse("the intensity ceiling is 0")
@@ -113,8 +107,6 @@ class ShockTrigger:
             res = ctl.start_shock(s.shock_channels, level, s.shock_seconds, source)
         except ControlError as exc:
             return refuse(str(exc))
-        with self._lock:
-            self._cooldown_until = now + res["seconds"] + s.shock_cooldown_s
         self.last = f"{percent}% ({res['applied']:.0f} of {cap}) on {res['channels']} for {res['seconds']:.0f} s"
         ctl.log(f"Shock trigger: drew {percent}% of the ceiling")
         self._announce(percent, int(res["seconds"]))
@@ -209,7 +201,6 @@ class ShockTrigger:
         snap = self.control.snapshot()["shock"]
         now = self._clock()
         with self._lock:
-            cooldown = max(0.0, self._cooldown_until - now)
             touch_age = None if self._last_touch is None else round(now - self._last_touch, 1)
             ignored, ignored_n = self._ignored, self._ignored_n
         return {
@@ -221,7 +212,6 @@ class ShockTrigger:
             "active": snap["active"],
             "remaining_s": snap["remaining_s"],
             "level": snap["level"],
-            "cooldown_s": 0.0 if snap["active"] else round(cooldown, 1),
             "connected": bool(self._is_connected()),
             "estopped": self.control.estopped,
             "last": self.last,

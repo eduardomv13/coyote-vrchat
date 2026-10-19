@@ -724,12 +724,14 @@ class ShockCard(Card):
         self.lbl_ignored = make_label(b, "", fg=RED, font=(FONT, 9), wraplength=330, justify="left")
         self.lbl_ignored.pack(fill="x", pady=(0, 6))
 
-        self.lbl_power = make_label(b, "", fg=TEXT, wraplength=330, justify="left")
-        self.lbl_power.pack(fill="x")
-        make_label(b, "Lowest power (%)", fg=DIM, font=(FONT, 9)).pack(fill="x")
+        make_label(b, "Each touch draws a random power between the minimum and the maximum:", fg=DIM,
+                   font=(FONT, 9), wraplength=330, justify="left").pack(fill="x")
+        self.lbl_min = make_label(b, "", fg=TEXT)
+        self.lbl_min.pack(fill="x", pady=(4, 0))
         self.s_min = GoldSlider(b, 1, 100, value=s.shock_min_pct, command=self._on_min, release=self._apply_range)
         self.s_min.pack(fill="x")
-        make_label(b, "Highest power (%)", fg=DIM, font=(FONT, 9)).pack(fill="x")
+        self.lbl_max = make_label(b, "", fg=TEXT)
+        self.lbl_max.pack(fill="x", pady=(4, 0))
         self.s_max = GoldSlider(b, 1, 100, value=s.shock_max_pct, command=self._on_max, release=self._apply_range)
         self.s_max.pack(fill="x")
 
@@ -738,12 +740,6 @@ class ShockCard(Card):
         self.s_secs = GoldSlider(b, 1, 30, value=s.shock_seconds, command=self._secs_label,
                                  release=lambda v: self.app.engine.configure_shock(shock_seconds=int(v)))
         self.s_secs.pack(fill="x")
-
-        self.lbl_cool = make_label(b, "", fg=TEXT)
-        self.lbl_cool.pack(fill="x", pady=(4, 0))
-        self.s_cool = GoldSlider(b, 0, 120, value=s.shock_cooldown_s, command=self._cool_label,
-                                 release=lambda v: self.app.engine.configure_shock(shock_cooldown_s=int(v)))
-        self.s_cool.pack(fill="x")
 
         row = tk.Frame(b, bg=PANEL)
         row.pack(fill="x", pady=(4, 0))
@@ -779,8 +775,9 @@ class ShockCard(Card):
         make_button(btns, "Test shock now", self._test_shock).pack(side="left")
         self.lbl_last = make_label(b, "", fg=DIM, font=(FONT, 9), wraplength=330, justify="left")
         self.lbl_last.pack(fill="x", pady=(4, 0))
-        make_label(b, "One shock per touch (a contact that stays on does not repeat), then the pause. The power is a "
-                      "percentage of the intensity ceiling and follows the rise limit; STOP ALL cancels it. "
+        make_label(b, "One shock per touch: a contact that stays on does not repeat, and a touch while a shock is "
+                      "running is ignored. The power is a percentage of the intensity ceiling and follows the rise limit; "
+                      "STOP ALL cancels it. "
                       "Whoever can touch the contact on your avatar can fire it.",
                    fg=DIM, font=(FONT, 9), wraplength=330, justify="left").pack(fill="x", pady=(4, 0))
 
@@ -797,16 +794,12 @@ class ShockCard(Card):
     def _power_label(self):
         lo, hi = int(self.s_min.value), int(self.s_max.value)
         cap = self.app.engine.control.cap("gui")
-        text = f"Random power: {lo}% to {hi}% of the ceiling  =  {self._units(lo)} to {self._units(hi)}"
-        if cap != 200:
-            text += f"  (ceiling {cap})"
-        set_text(self.lbl_power, text)
+        note = f"  [ceiling {cap}]" if cap != 200 else ""
+        set_text(self.lbl_min, f"Minimum random power: {lo}%   (= {self._units(lo)} of 200){note}")
+        set_text(self.lbl_max, f"Maximum random power: {hi}%   (= {self._units(hi)} of 200){note}")
 
     def _secs_label(self, v):
         set_text(self.lbl_secs, f"Each shock lasts {v:.0f} s  (up to 30)")
-
-    def _cool_label(self, v):
-        set_text(self.lbl_cool, "Pause after a shock: none" if v <= 0 else f"Pause after a shock: {v:.0f} s")
 
     # ---- actions
     def _toggle(self):
@@ -819,8 +812,7 @@ class ShockCard(Card):
                 "Enable the shock trigger",
                 f"Whoever touches the contact {s.osc_param_shock} on your avatar will shock you.\n\n"
                 f"Power: a random value between {lo}% and {hi}% of your intensity ceiling "
-                f"({self._units(lo)} to {self._units(hi)}), for {s.shock_seconds} s, on channel(s) {s.shock_channels}, "
-                f"with {s.shock_cooldown_s} s between shocks.\n\n"
+                f"({self._units(lo)} to {self._units(hi)}), for {s.shock_seconds} s, on channel(s) {s.shock_channels}.\n\n"
                 "The ceiling, the rise limit and STOP ALL still apply. It starts off every time you open the program.\n\n"
                 "A shock needs the Coyote, so if it is not connected the program will try to connect it now.\n\n"
                 "Enable?",
@@ -907,7 +899,6 @@ class ShockCard(Card):
             self.s_min.set(s.shock_min_pct)
             self.s_max.set(s.shock_max_pct)
         self.s_secs.set(s.shock_seconds)
-        self.s_cool.set(s.shock_cooldown_s)
         for var, letter in ((self.v_a, "A"), (self.v_b, "B")):
             if var.get() != (letter in s.shock_channels):
                 var.set(letter in s.shock_channels)
@@ -915,7 +906,6 @@ class ShockCard(Card):
             self.v_chat.set(s.chatbox_enabled)
         self._power_label()
         self._secs_label(self.s_secs.value)
-        self._cool_label(self.s_cool.value)
 
         if not st["enabled"]:
             set_text(self.lbl_state, "● Off: touching the contact does nothing", DIM)
@@ -927,8 +917,6 @@ class ShockCard(Card):
             set_text(self.lbl_state, "● Armed, but the emergency stop is active: touches are ignored", RED)
         elif not st["connected"]:
             set_text(self.lbl_state, "● Armed, but the Coyote is not connected: touches are ignored", GOLD)
-        elif st["cooldown_s"] > 0:
-            set_text(self.lbl_state, f"● Pausing between shocks: {st['cooldown_s']:.0f} s", GOLD)
         else:
             set_text(self.lbl_state, f"● Armed: waiting for a touch on {s.osc_param_shock or '(no parameter set)'}", GREEN)
         set_text(self.lbl_last, "Last shock: " + (st["last"] or "none yet"))

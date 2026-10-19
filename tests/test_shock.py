@@ -1,7 +1,7 @@
 """The shock trigger: a touch on the avatar's ShockOsc/_all contact -> a timed shock at a random power + a chatbox message.
 
 A UDP socket plays the part of VRChat's OSC input (where the chatbox messages go), and the device is the simulated Coyote.
-Time is a fake clock, so the durations, pauses and rise limit can be checked exactly.
+Time is a fake clock, so the durations and the rise limit can be checked exactly.
 """
 import json
 import random
@@ -62,7 +62,7 @@ class FakeScheduler:
 
 
 class ShockCase(unittest.TestCase):
-    """A connected (simulated) Coyote, the trigger switched on, a fixed 40% power for 5 s, a 10 s pause."""
+    """A connected (simulated) Coyote, the trigger switched on, a fixed 40% power for 5 s."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -73,7 +73,6 @@ class ShockCase(unittest.TestCase):
         s.shock_enabled = True
         s.shock_min_pct = s.shock_max_pct = 40
         s.shock_seconds = 5
-        s.shock_cooldown_s = 10
         s.shock_channels = "AB"
         self.vrc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)   # VRChat's OSC input
         self.vrc.bind(("127.0.0.1", 0))
@@ -140,7 +139,7 @@ class TouchTests(ShockCase):
 
     def test_a_contact_that_stays_on_does_not_repeat(self):
         self.touch(True)
-        self.clock.advance(60)                                     # the shock and the pause are long over
+        self.clock.advance(60)                                     # the shock is long over
         self.out()
         self.touch(True)                                           # still held: VRChat repeats the same value
         self.assertFalse(self.ctl.shock_active())
@@ -148,19 +147,17 @@ class TouchTests(ShockCase):
         self.touch(True)                                           # a NEW touch
         self.assertTrue(self.ctl.shock_active())
 
-    def test_pause_between_shocks(self):
+    def test_there_is_no_pause_after_a_shock(self):
         self.tap()
-        self.clock.advance(5.5)                                    # the shock ended, the pause has not
+        self.clock.advance(4.9)
+        self.tap()                                                 # still running: ignored
+        self.assertTrue(self.logged("a shock is already running"))
+        self.clock.advance(0.2)                                    # it ended 0.1 s ago
         self.assertEqual(self.out(), (0.0, 0.0))
-        self.tap()
         self.assertFalse(self.ctl.shock_active())
-        self.assertTrue(self.logged("pausing between shocks"))
-        self.clock.advance(9.0)                                    # 14.5 s since the touch: 5 s shock + 10 s pause = 15 s
-        self.tap()
-        self.assertFalse(self.ctl.shock_active())                  # half a second early
-        self.clock.advance(0.6)
-        self.tap()
+        self.tap()                                                 # the very next touch fires again: no pause
         self.assertTrue(self.ctl.shock_active())
+        self.assertEqual(self.out(), (80.0, 80.0))
 
     def test_a_touch_during_a_shock_is_ignored_and_does_not_extend_it(self):
         self.tap()
@@ -168,14 +165,6 @@ class TouchTests(ShockCase):
         self.tap()
         self.assertEqual(self.ctl.snapshot()["shock"]["remaining_s"], 3.0)
         self.assertTrue(self.logged("a shock is already running"))
-
-    def test_zero_pause_allows_back_to_back_shocks(self):
-        self.engine.configure_shock(shock_cooldown_s=0)
-        self.tap()
-        self.clock.advance(5.1)
-        self.out()
-        self.tap()
-        self.assertTrue(self.ctl.shock_active())
 
     def test_float_contact_values_and_the_name_case(self):
         self.touch(0.2)                                            # barely there: not a touch
@@ -266,7 +255,7 @@ class RefusalTests(ShockCase):
 
 class PowerTests(ShockCase):
     def test_the_power_is_random_inside_the_range_and_follows_the_ceiling(self):
-        self.engine.configure_shock(shock_min_pct=10, shock_max_pct=12, shock_cooldown_s=0, shock_seconds=1)
+        self.engine.configure_shock(shock_min_pct=10, shock_max_pct=12, shock_seconds=1)
         self.engine.configure(max_intensity=100)
         self.engine.shock._rng = random.Random(7)
         seen = set()
@@ -280,7 +269,7 @@ class PowerTests(ShockCase):
         self.assertEqual(seen, {10, 11, 12})                       # both ends and the middle, nothing outside
 
     def test_every_value_in_the_widest_range_stays_inside_the_ceiling(self):
-        self.engine.configure_shock(shock_min_pct=1, shock_max_pct=100, shock_cooldown_s=0, shock_seconds=1)
+        self.engine.configure_shock(shock_min_pct=1, shock_max_pct=100, shock_seconds=1)
         self.engine.configure(max_intensity=150)
         self.engine.shock._rng = random.Random(3)
         for _ in range(200):
@@ -357,7 +346,7 @@ class ChatboxTests(ShockCase):
         self.assertIsNone(self.chat())
 
     def test_messages_that_come_too_fast_are_skipped(self):
-        self.engine.configure_shock(shock_cooldown_s=0, shock_seconds=1)
+        self.engine.configure_shock(shock_seconds=1)
         self.tap()
         self.clock.advance(1.1)
         self.out()
@@ -388,8 +377,9 @@ class SettingsTests(ShockCase):
         d = Settings().validate()
         self.assertEqual((d.osc_param_shock, d.shock_enabled, d.shock_min_pct, d.shock_max_pct, d.shock_seconds),
                          ("ShockOsc/_all", False, 10, 30, 3))
-        self.assertEqual((d.shock_cooldown_s, d.shock_channels, d.chatbox_enabled, d.chatbox_port, d.chatbox_text),
-                         (10, "AB", True, 9000, "Shock {percent}%"))
+        self.assertEqual((d.shock_channels, d.chatbox_enabled, d.chatbox_port, d.chatbox_text),
+                         ("AB", True, 9000, "Shock {percent}%"))
+        self.assertFalse(hasattr(d, "shock_cooldown_s"))           # the pause between shocks does not exist
         self.assertEqual(d.chatbox_clear_s, 3)
 
     def test_clear_seconds_validation(self):
@@ -397,9 +387,9 @@ class SettingsTests(ShockCase):
             self.assertEqual(Settings(chatbox_clear_s=given).validate().chatbox_clear_s, expected, given)
 
     def test_validation_clamps_and_orders(self):
-        s = Settings(shock_min_pct=80, shock_max_pct=20, shock_seconds=99, shock_cooldown_s=-5, shock_channels="ba",
+        s = Settings(shock_min_pct=80, shock_max_pct=20, shock_seconds=99, shock_channels="ba",
                      chatbox_port=0, chatbox_text=None).validate()
-        self.assertEqual((s.shock_min_pct, s.shock_max_pct, s.shock_seconds, s.shock_cooldown_s), (20, 80, 30, 0))
+        self.assertEqual((s.shock_min_pct, s.shock_max_pct, s.shock_seconds), (20, 80, 30))
         self.assertEqual((s.shock_channels, s.chatbox_text), ("AB", ""))
         self.assertEqual(Settings(shock_min_pct=0, shock_max_pct=500).validate().shock_min_pct, 1)
         self.assertEqual(Settings(shock_channels="zz").validate().shock_channels, "AB")
@@ -418,6 +408,12 @@ class SettingsTests(ShockCase):
         with self.assertRaises(ControlError):
             self.engine.configure_shock(nonsense=1)
 
+    def test_an_old_settings_file_with_the_removed_pause_still_loads(self):
+        self.path.write_text(json.dumps({"shock_cooldown_s": 30, "shock_min_pct": 15, "api_token": "t"}), encoding="utf-8")
+        loaded = load_settings(self.path)
+        self.assertEqual(loaded.shock_min_pct, 15)
+        self.assertFalse(hasattr(loaded, "shock_cooldown_s"))
+
     def test_the_enabled_flag_is_never_saved_but_the_rest_is(self):
         self.engine.configure_shock(shock_min_pct=15, shock_max_pct=45, shock_seconds=12, chatbox_text="Zap {percent}")
         self.assertTrue(self.settings.shock_enabled)
@@ -431,8 +427,7 @@ class SettingsTests(ShockCase):
 
     def test_status_for_the_window(self):
         st = self.engine.shock_status()
-        self.assertEqual((st["enabled"], st["active"], st["cooldown_s"], st["connected"], st["estopped"]),
-                         (True, False, 0.0, True, False))
+        self.assertEqual((st["enabled"], st["active"], st["connected"], st["estopped"]), (True, False, True, False))
         self.tap()
         st = self.engine.shock_status()
         self.assertTrue(st["active"])
@@ -442,7 +437,7 @@ class SettingsTests(ShockCase):
         self.clock.advance(6)
         st = self.engine.shock_status()
         self.assertFalse(st["active"])
-        self.assertEqual(st["cooldown_s"], 9.0)                   # 15 s since the touch, 6 s passed
+        self.assertNotIn("cooldown_s", st)
 
     def test_status_reports_touches_and_ignored_touches(self):
         st = self.engine.shock_status()
@@ -508,7 +503,7 @@ class ChatboxClearTests(ShockCase):
         self.assertIsNone(self.chat())                             # with clearing off the message is left alone
 
     def test_a_newer_message_makes_the_older_clear_stale(self):
-        self.engine.configure_shock(shock_cooldown_s=0, shock_seconds=1)
+        self.engine.configure_shock(shock_seconds=1)
         self.tap()
         first = self.sched.pending()[0]
         self.clock.advance(2.0)
@@ -523,7 +518,7 @@ class ChatboxClearTests(ShockCase):
         self.assertEqual(self.chat(), ("/chatbox/input", ["", True, False]))
 
     def test_a_message_skipped_for_speed_leaves_the_pending_clear_alone(self):
-        self.engine.configure_shock(shock_cooldown_s=0, shock_seconds=1)
+        self.engine.configure_shock(shock_seconds=1)
         self.tap()
         first = self.sched.pending()[0]
         self.clock.advance(1.1)
@@ -535,7 +530,7 @@ class ChatboxClearTests(ShockCase):
         self.assertEqual(self.chat(), ("/chatbox/input", ["", True, False]))
 
     def test_a_new_shock_right_after_a_clear_is_too_fast_to_announce(self):
-        self.engine.configure_shock(shock_cooldown_s=0, shock_seconds=1)
+        self.engine.configure_shock(shock_seconds=1)
         self.tap()
         handle = self.sched.pending()[0]
         self.chat()

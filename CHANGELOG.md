@@ -1,0 +1,29 @@
+# Changelog
+
+Every version has a number and its own [GitHub release](https://github.com/eduardomv13/coyote-vrchat/releases) (tag
+`vMAJOR.MINOR.PATCH`). Old releases are never removed or replaced: a new version is a new release. The in-game panel for
+Unity (`unity/`) has its own version number, listed in [its changelog](unity/io.github.eduardomv13.coyote-panel/CHANGELOG.md).
+
+## 1.1.0 (2026-10-19)
+
+- **Shock trigger** (new, off by default and at every start): when someone touches the avatar's `ShockOsc/_all` contact, the
+  program fires one shock at a random power between a **minimum** and a **maximum** you set (percentages of the intensity
+  ceiling), for 1 to 30 seconds, on channel A, B or both. A touch while a shock is running is ignored, and there is no other
+  delay between shocks.
+- The power is announced in the VRChat chatbox (`Shock 37%`, editable text) and the message is removed again after 3 seconds
+  (editable; 0 = leave it). Removing it is done with an empty message, which VRChat does not document: it may not work on every
+  VRChat version.
+- A shock is a temporary *minimum* level: it never lowers what the window, a panel or the AI ask for, follows the intensity
+  ceiling and the rise limit, and STOP ALL cancels it (and removes the chatbox message).
+- It never fires without a connected Coyote or during the emergency stop. Ticking the trigger asks for confirmation and tries
+  to connect the Coyote; the header chip says **NOT READY** in red while it cannot fire, and a touch that is ignored is shown
+  with the reason.
+- `tools/send_test_osc.py --shock` simulates a touch.
+- The Unity panel package went from 0.1.0 to 0.2.1 (release to zero, sideways-only sliders, finger-touch buttons).
+- 237 automated tests (it was 175).
+
+## 1.0.0 (2026-10-16)
+
+First public version: direct Bluetooth control of a DG-LAB Coyote 3.0 from VRChat OSC (`CoyoteA`, `CoyoteB`, `CoyoteFreq`,
+`CoyoteStop`), a window with manual sliders and patterns, safety limits (ceiling, rise limit, latched emergency stop, OSC
+watchdog) and an optional local API / MCP server for an AI.

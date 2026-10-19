@@ -100,7 +100,7 @@ class Engine:
         return changed
 
     # ------------------------------------------------------------------ shock trigger (ShockOSC contact)
-    _SHOCK_KEYS = ("osc_param_shock", "shock_min_pct", "shock_max_pct", "shock_seconds", "shock_cooldown_s",
+    _SHOCK_KEYS = ("osc_param_shock", "shock_min_pct", "shock_max_pct", "shock_seconds",
                    "shock_channels", "chatbox_enabled", "chatbox_host", "chatbox_port", "chatbox_text",
                    "chatbox_clear_s")
 
@@ -144,7 +144,7 @@ class Engine:
         return self.shock.status()
 
     def test_shock(self) -> dict:
-        """The same as a touch on the contact (it obeys every rule: switched on, connected, no pause, no emergency stop)."""
+        """The same as a touch on the contact (it obeys every rule: switched on, connected, no shock running, no emergency stop)."""
         return self.shock.fire("gui")
 
     def test_chatbox(self) -> bool:

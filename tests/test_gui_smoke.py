@@ -559,12 +559,12 @@ class GuiSmoke(unittest.TestCase):
         card.s_max._up(click(12))                       # all the way left: 1%
         self.assertEqual((s.shock_min_pct, s.shock_max_pct), (1, 1))
         card.s_secs.release(12)
-        card.s_cool.release(25)
-        self.assertEqual((s.shock_seconds, s.shock_cooldown_s), (12, 25))
+        self.assertEqual(s.shock_seconds, 12)
         self.refresh()
         self.assertIn("12 s", card.lbl_secs.cget("text"))
-        self.assertIn("25 s", card.lbl_cool.cget("text"))
-        self.assertIn("1% to 1%", card.lbl_power.cget("text"))
+        self.assertIn("Minimum random power: 1%", card.lbl_min.cget("text"))
+        self.assertIn("Maximum random power: 1%", card.lbl_max.cget("text"))
+        self.assertNotIn("s_cool", vars(card))                          # there is no pause slider any more
         card.s_secs._user_set(30)
         self.assertEqual(card.s_secs.value, 30.0)       # the slider tops out at 30 seconds
         card.s_secs._user_set(99)
