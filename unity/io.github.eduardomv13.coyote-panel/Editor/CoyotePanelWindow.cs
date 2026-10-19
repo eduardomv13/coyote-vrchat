@@ -93,6 +93,16 @@ namespace CoyotePanel.Editor
             options.scale = EditorGUILayout.Slider(new GUIContent("Scale", "Size of the whole panel; the two distances above scale with it."), options.scale, 0.25f, 4f);
             options.flipFacing = EditorGUILayout.Toggle(new GUIContent("Flip facing", "Put the plate on the back of the hand instead of the palm side."), options.flipFacing);
 
+            EditorGUILayout.Space(8);
+            EditorGUILayout.LabelField("Touch buttons", EditorStyles.boldLabel);
+            EditorGUILayout.HelpBox(
+                "A fingertip presses a button when it gets within about (radius + height) of the plate surface. If the buttons fire " +
+                "from too far away, lower these; if you have to push the finger far into the plate, raise them. " +
+                "Rebuild the panel after changing them.", MessageType.Info);
+            options.touchRadius = EditorGUILayout.Slider(new GUIContent("Touch radius (m)", "Radius of the sensor sphere of each button."), options.touchRadius, 0.002f, 0.03f);
+            options.touchHeight = EditorGUILayout.Slider(new GUIContent("Touch height (m)", "How far in front of the plate the sensor sphere sits (negative = behind the surface)."), options.touchHeight, -0.01f, 0.03f);
+            options.excludeHoldingHand = EditorGUILayout.Toggle(new GUIContent("Ignore the holding hand", "Off: the fingers of both of your hands press the buttons. On: the hand that holds the panel is left out, in case it sets buttons off by accident."), options.excludeHoldingHand);
+
             EditorGUILayout.Space(4);
             options.frameMode = (FrameMode)EditorGUILayout.EnumPopup(new GUIContent("Hand direction", "Auto reads the skeleton. Hand-bone axes uses fixed axes of the hand bone (rig-specific)."), options.frameMode);
             if (options.frameMode == FrameMode.BoneAxes)

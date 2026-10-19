@@ -1,7 +1,7 @@
 {
   "name": "io.github.eduardomv13.coyote-panel",
   "displayName": "DG-LAB Coyote Panel for VRChat Avatars",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "unity": "2022.3",
   "description": "An in-game control panel for a DG-LAB Coyote 3.0: two intensity sliders (A/B), +/- buttons and a frequency control, held in a hand, installed on a VRChat avatar through Modular Avatar. Talks to the coyote-vrchat PC program over VRChat OSC. PC only. Read the safety notes before using it.",
   "author": {

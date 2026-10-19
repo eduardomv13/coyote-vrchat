@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1
+
+Two fixes after the first in-game test of 0.2.0 (which worked, apart from these). **Not tried in VRChat yet.**
+
+- **The touch buttons only fire when a fingertip is practically on the button.** The sensor sphere was 18 mm and sat 6 mm
+  in front of the plate, so a finger registered up to about 2.4 cm away. It is now 5 mm, 1 mm in front of the plate: about
+  6 mm of reach. Both numbers are options (options window, *Touch buttons*: radius and height) because the right values
+  depend on the size of your avatar's finger colliders (6 to 7 mm on the author's avatar).
+- **Both of the wearer's hands press the buttons.** 0.2.0 deliberately ignored the hand that holds the panel (the left one
+  by default), so the buttons seemed to work with one hand only. New option *Ignore the holding hand*, off by default,
+  brings the old behavior back.
+
 ## 0.2.0
 
 Three behavior changes, asked for after the first in-game test of 0.1.0. **None of them has been tried in VRChat yet**

@@ -38,9 +38,9 @@ namespace CoyotePanel.Editor
         public const float PB_GRIP_RADIUS = 0.020f;    // grab radius of the grip
         public const float PB_PULL = 0.6f;             // force back to rest on release
 
-        // Touch buttons: VRChat contact receivers fed by the avatars' own fingertip senders (tags "Finger...")
-        public const float TOUCH_RADIUS = 0.018f;      // radius of the sphere a fingertip has to enter
-        public const float TOUCH_Z = -0.006f;          // in front of the plate surface
+        // Touch buttons: VRChat contact receivers fed by the avatars' own fingertip senders (tags "Finger...").
+        // The size of the sensor sphere and its height in front of the plate are options (CoyotePanelOptions.touchRadius /
+        // touchHeight): a fingertip counts as pressing when it gets within about (radius + height) of the plate surface.
         public const float TOUCH_DEBOUNCE = 0.1f;      // seconds a press lasts at least (contact chatter must not add steps)
 
         // _Stretch (0-1) -> 0-200: below 0.03 it does not update (a dead zone: a small forward pull or hand jitter must

@@ -37,9 +37,10 @@ On top of that, this panel adds risks of its own:
   *posed* (grab it and pull the trigger/click to lock it in place; that keeps the value until you release the pose).
   The buttons set a value that stays until you change it.
 - **A touch button is one step per touch, never a repeat.** A fingertip resting on a button must not keep raising the
-  power, so to go up by 30 you touch three times. The wearer's own fingers count **except those of the hand that holds
-  the panel** (they are always near it): with the panel in the left hand, only the right hand's fingers work for the
-  wearer. Other players' fingers always work.
+  power, so to go up by 30 you touch three times. The fingers of both of the wearer's hands count, and so do other
+  players'. The fingertip has to be practically on the button (about 6 mm from the plate, see
+  [how the touch buttons work](#how-the-touch-buttons-work)). If the hand that holds the panel sets a button off by
+  accident, turn on *Ignore the holding hand* in the options window and rebuild.
 - **The panel's numbers are fractions of the program's ceiling, not device units.** The panel sends `CoyoteA` =
   value ÷ 200. The PC program turns that into a fraction of **its own intensity ceiling** (200 by default). Panel value
   200 always means "the ceiling", panel value 100 means "half of it". If you lower the ceiling in the program to 80,
@@ -229,6 +230,11 @@ grabbing a grip and dragging it changes the value; that value reaches the PC pro
 slider path: `CoyoteA`/`CoyoteB` = value ÷ 200). The program side has also been tested with a real Coyote 3.0 (see the
 main README).
 
+**Reported by the author for 0.2.0 (VRChat, PC, 2026-10-18):** it worked, apart from two problems: the touch buttons
+fired from too far away, and only one hand's fingers pressed them (0.2.0 left out the hand that holds the panel on
+purpose). The fact that one hand's fingers did press them also shows that an avatar's own fingertip senders are detected
+by its own receivers. Those two problems are what 0.2.1 changes, and 0.2.1 itself has not been tried yet.
+
 **Checked without VRChat (this is what the version in this repository was verified with):**
 
 - The controller built by this package is identical to the one built by the original, single-avatar builder (0
@@ -251,21 +257,18 @@ main README).
 
 **Not tested (so treat all of this as unknown):**
 
-- **Other players** grabbing the panel, and the lock in the world for other players: who can grab, whether a player who
+- **Other players** grabbing the panel or touching its buttons, and the lock in the world for other players: who can grab, whether a player who
   joins after the panel was locked sees it in the right place, and what the synced values look like to them. This is
   the point of the "Lock in world" feature and it has not been tried.
 - **Which input you use.** The author did not test desktop mode and VR hands/controllers separately, so treat the one you
   use as unconfirmed until you try it.
 - Anything in VRChat on **any avatar other than the author's**, **the right hand** in the game, and avatars with **Write
   Defaults off** (the build converts the states, which was checked in the editor, not in the game).
-- **Everything that changed in 0.2.0 has not been tried in VRChat yet:** letting go of a grip setting the value to 0,
-  the long-bone grips only responding to sideways pulls, and the touch buttons (that a fingertip registers, that the
-  right radius and position feel right, that your own fingers and other players' fingers both work, and that the holding
-  hand does not trigger anything). Before 0.2.0 the sliders were the part confirmed in the game; the buttons were
-  PhysBones you had to hold, and they were not confirmed.
-- Whether VRChat really gives **every** avatar fingertip contact senders with the tags `Finger`/`FingerL`/`FingerR`, and
-  whether your own are detected (the VRChat documentation says humanoid avatars get them automatically; this package
-  relies on that and has not seen it work).
+- **What changed in 0.2.1:** the smaller touch sensor (5 mm radius, 1 mm in front of the plate: about 6 mm of reach; that
+  suits finger colliders of 6 to 7 mm like the author's, and other avatars may need other numbers), and both of the
+  wearer's hands pressing the buttons (including the one that holds the panel, which can set a button off by accident).
+- Fingertip senders on **avatars other than the author's**. The author's avatar uses VRChat's automatic finger colliders,
+  and the VRChat documentation says every humanoid avatar gets them; that is all this package relies on.
 - In the game, separately: **Lock in world** and posing a grip.
 - **Quest/Android.** The panel uses PhysBones, a constraint and built-in unlit shaders that were never checked for Quest.
   Upload PC only, or remove the panel from the Quest variant.
@@ -294,6 +297,24 @@ Side effects you should know about:
 - Letting go of the grip makes the knob spring back by itself (the PhysBone's `Pull`), and the value goes to 0 at the same
   moment, so the marker on the plate does not wait for the knob.
 
+## How the touch buttons work
+
+Each button has two small sphere **contact receivers** on the plate, one for your own fingers and one for other players'.
+VRChat gives every humanoid avatar fingertip contact senders (tag `Finger`, from the standard finger colliders in the
+Avatar Descriptor), so the buttons need nothing from whoever touches them. A button counts as pressed while a fingertip
+overlaps its sphere, which means while the fingertip is within about **radius + height** of the plate surface. The
+defaults are a radius of 5 mm and a height of 1 mm (about 6 mm of reach), and a finger still counts up to about 1 cm
+from the center of a button when it touches the plate (that figure is for finger colliders of 6 to 7 mm, which is what
+the author's avatar has).
+
+- The right numbers depend on the avatar: the sensor looks at the finger *collider*, not at the skin. If your avatar's
+  finger colliders are thick, buttons fire from a little too far: lower the radius, or set a negative height to push the
+  sensor behind the plate surface. If you have to push the finger far into the plate, raise them. Both are in the
+  options window (*Touch buttons*); rebuild the panel after changing them.
+- The receivers are **local only**: they cost nothing in the avatar's performance rank, and it also means that only the
+  wearer sees a button sink when it is pressed (everybody sees the number change, because that value is synced).
+- A press lasts at least 0.1 s, so contact flicker at the edge of the sphere does not add extra steps.
+
 ## Troubleshooting
 
 | Symptom | What to do |
@@ -301,8 +322,8 @@ Side effects you should know about:
 | *Tools > Coyote Panel* is missing | The package did not compile: look for red errors in the console. Check you have the SDK and Modular Avatar at the versions above. |
 | "needs a Humanoid rig" / "no hand bone" | Set the avatar's rig to Humanoid and map the hand and lower-arm bones. |
 | The panel is in the wrong place or upside down | Use the options window: Hand, distances, Roll, Flip facing, or *Hand-bone axes*. Rebuild, and check in the Scene view. |
-| A touch button does nothing | The button needs a fingertip contact sender with the tag `Finger` (any player) or `FingerR`/`FingerL` (yourself, the hand that does not hold the panel). VRChat adds them to humanoid avatars unless the avatar defines its own, so check that your avatar and the other player's are humanoid. Other players' fingers are also subject to VRChat's own safety/interaction settings (theirs and yours) |
-| A touch button fires by itself | Something of yours keeps entering it: the hand that holds the panel is excluded on purpose, but props or a second avatar's hands are not. Move the panel (options window: *Out of the palm* / *Along the fingers*) |
+| A touch button does nothing | The finger needs a contact sender with the tag `Finger`. VRChat adds them to humanoid avatars unless the avatar defines its own, so check that your avatar and the other player's are humanoid. If you have to push the finger far into the plate, raise *Touch radius* / *Touch height* in the options window and rebuild. Other players' fingers are also subject to VRChat's own safety/interaction settings (theirs and yours) |
+| A touch button fires from too far away, or by itself | Lower *Touch radius* / *Touch height* in the options window and rebuild (a finger registers within about radius + height of the plate; the defaults, 5 mm + 1 mm, suit finger colliders of 6 to 7 mm). If it is the hand that holds the panel that sets it off, turn on *Ignore the holding hand*. Props or other avatars' hands near the panel can also trigger it; move the panel (*Out of palm* / *Toward fingers*) |
 | The panel is always visible in the game | You left the preview on. Turn off `Coyote Panel/Container/Content` (the options window has a button) and upload again. |
 | In the game the panel moves but nothing reaches the program | OSC enabled? **Options > OSC > Reset Config**, then select the avatar again. Is the program running and showing "OSC: receiving"? See [docs/AVATAR_SETUP.md](../docs/AVATAR_SETUP.md). |
 | `CoyoteA`/`CoyoteB` jump back to 0 or flicker | Something else also writes them (for example a radial puppet). Remove it: the panel owns those two parameters. |

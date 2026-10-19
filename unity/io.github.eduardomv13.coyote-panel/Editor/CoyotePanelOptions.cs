@@ -34,6 +34,15 @@ namespace CoyotePanel.Editor
         /// <summary>Put the plate on the back of the hand instead of the palm side.</summary>
         public bool flipFacing = false;
 
+        /// <summary>Radius of the sensor sphere of each touch button (meters, before Scale). Smaller = the fingertip has to be closer.</summary>
+        public float touchRadius = 0.005f;
+        /// <summary>How far in front of the plate surface the center of that sphere sits (meters, before Scale; negative = behind it).
+        /// A fingertip counts as pressing when it gets within about touchRadius + touchHeight of the plate surface.</summary>
+        public float touchHeight = 0.001f;
+        /// <summary>Leave the fingers of the hand that holds the panel out of the touch buttons. Off by default, so both of the
+        /// wearer's hands can press them; turn it on if that hand sets buttons off by accident.</summary>
+        public bool excludeHoldingHand = false;
+
         public FrameMode frameMode = FrameMode.Auto;
         /// <summary>BoneAxes mode only: local axis of the hand bone that points out of the palm.</summary>
         public BoneAxis palmAxis = BoneAxis.MinusZ;
@@ -68,6 +77,8 @@ namespace CoyotePanel.Editor
             scale = Mathf.Clamp(scale, 0.25f, 4f);
             alongMeters = Mathf.Clamp(alongMeters, -1f, 1f);
             outMeters = Mathf.Clamp(outMeters, -1f, 1f);
+            touchRadius = Mathf.Clamp(touchRadius, 0.002f, 0.03f);
+            touchHeight = Mathf.Clamp(touchHeight, -0.03f, 0.03f);
             if (string.IsNullOrWhiteSpace(outputFolder) || !outputFolder.Replace('\\', '/').StartsWith("Assets"))
                 outputFolder = "Assets/CoyotePanel/Generated";
             outputFolder = outputFolder.Replace('\\', '/').TrimEnd('/');

@@ -166,15 +166,17 @@ namespace CoyotePanel.Editor
             // PhysBone grips: stretch when grabbed (one long bone per grip, see the note in PanelLayout.cs)
             AddGrip(content, "A_Grip", ROW_A, PFX_A, assets.cube, assets.matGold);
             AddGrip(content, "B_Grip", ROW_B, PFX_B, assets.cube, assets.matGold);
-            // Touch buttons: contact receivers fed by the avatars' fingertips. The wearer's own fingers count, except those
-            // of the hand that holds the panel (they are always near it); every finger of other players counts.
-            string selfTag = o.hand == PanelHand.Left ? "FingerR" : "FingerL";
-            AddTouch(content, "A_Minus", new Vector3(MINUS_X, ROW_A, TOUCH_Z), TB_AMINUS, selfTag);
-            AddTouch(content, "A_Plus", new Vector3(PLUS_X, ROW_A, TOUCH_Z), TB_APLUS, selfTag);
-            AddTouch(content, "B_Minus", new Vector3(MINUS_X, ROW_B, TOUCH_Z), TB_BMINUS, selfTag);
-            AddTouch(content, "B_Plus", new Vector3(PLUS_X, ROW_B, TOUCH_Z), TB_BPLUS, selfTag);
-            AddTouch(content, "F_Down", new Vector3(BTN_DN_X, ROW_F, TOUCH_Z), TB_DN, selfTag);
-            AddTouch(content, "F_Up", new Vector3(BTN_UP_X, ROW_F, TOUCH_Z), TB_UP, selfTag);
+            // Touch buttons: contact receivers fed by the avatars' fingertips. Every finger counts: the wearer's (both hands)
+            // and other players'. With o.excludeHoldingHand the wearer's holding hand is left out.
+            string selfTag = !o.excludeHoldingHand ? "Finger" : (o.hand == PanelHand.Left ? "FingerR" : "FingerL");
+            float tz = -o.touchHeight;      // the viewer is at -Z, so "in front of the plate" is negative
+            float tr = o.touchRadius;
+            AddTouch(content, "A_Minus", new Vector3(MINUS_X, ROW_A, tz), TB_AMINUS, selfTag, tr);
+            AddTouch(content, "A_Plus", new Vector3(PLUS_X, ROW_A, tz), TB_APLUS, selfTag, tr);
+            AddTouch(content, "B_Minus", new Vector3(MINUS_X, ROW_B, tz), TB_BMINUS, selfTag, tr);
+            AddTouch(content, "B_Plus", new Vector3(PLUS_X, ROW_B, tz), TB_BPLUS, selfTag, tr);
+            AddTouch(content, "F_Down", new Vector3(BTN_DN_X, ROW_F, tz), TB_DN, selfTag, tr);
+            AddTouch(content, "F_Up", new Vector3(BTN_UP_X, ROW_F, tz), TB_UP, selfTag, tr);
 
             // ------------------------------------------------ animator FX
             var ctrl = PanelController.Build(dir + "/CoyotePanel_FX.controller");
@@ -331,23 +333,24 @@ namespace CoyotePanel.Editor
 
         // A touch button: two sphere contact receivers on the same spot, both local only (they cost nothing in the
         // avatar's performance rank) and both "Constant" (the bool is on while a fingertip is inside).
-        //   Self   : the wearer's own fingers, with the tag of the hand that does NOT hold the panel (FingerR when held in the left hand)
+        //   Self   : the wearer's own fingers (tag "Finger" = both hands; the holding hand's side is left out when asked to)
         //   Others : any finger ("Finger") of another player
-        static void AddTouch(GameObject parent, string name, Vector3 pos, string button, string selfTag)
+        // They are two receivers, not one, only so that the wearer's tag set can differ from the others'.
+        static void AddTouch(GameObject parent, string name, Vector3 pos, string button, string selfTag, float radius)
         {
             var g = Child(parent, name);
             g.transform.localPosition = pos;
-            AddReceiver(g, "Self", TouchSelf(button), selfTag, true, false);
-            AddReceiver(g, "Others", TouchOthers(button), "Finger", false, true);
+            AddReceiver(g, "Self", TouchSelf(button), selfTag, true, false, radius);
+            AddReceiver(g, "Others", TouchOthers(button), "Finger", false, true, radius);
         }
 
-        static void AddReceiver(GameObject parent, string name, string parameter, string tag, bool allowSelf, bool allowOthers)
+        static void AddReceiver(GameObject parent, string name, string parameter, string tag, bool allowSelf, bool allowOthers, float radius)
         {
             var g = Child(parent, name);
             var r = g.AddComponent<VRCContactReceiver>();
             r.rootTransform = g.transform;
             r.shapeType = ContactBase.ShapeType.Sphere;
-            r.radius = TOUCH_RADIUS;
+            r.radius = radius;
             r.position = Vector3.zero;
             r.rotation = Quaternion.identity;
             r.collisionTags = new List<string> { tag };
