@@ -215,6 +215,7 @@ class GuiSmoke(unittest.TestCase):
         s.api_port = 0
         s.api_token = "token-de-teste"
         s.ramp_up_per_s = 0
+        s.chatbox_port = free_port()    # never 9000: a real VRChat on this machine must not receive test messages
         fake_mb.answer = True
         fake_mb.asked.clear()
         self.engine = Engine(settings=s, settings_path=Path(self.tmp.name) / "settings.json",
@@ -513,6 +514,135 @@ class GuiSmoke(unittest.TestCase):
         self.assertEqual(self.app.panel_a.s_int.value, 50.0)
         self.assertEqual(self.app.chip_osc.text.cget("text"), "OSC: receiving")
         self.assertIn("25%", self.app.osc.lbl_values.cget("text"))
+
+    # ---- shock trigger (ShockOSC contact)
+    def test_shock_enable_asks_for_confirmation_and_shows_in_the_header(self):
+        card = self.app.shock
+        fake_mb.answer = False
+        card.v_enabled.set(True)
+        card._toggle()
+        self.assertFalse(self.engine.settings.shock_enabled)
+        self.assertFalse(card.v_enabled.get())
+        self.assertEqual(len(fake_mb.asked), 1)
+        self.assertIn("ShockOsc/_all", fake_mb.asked[0][1])
+        self.assertIn("10% and 30%", fake_mb.asked[0][1])
+        fake_mb.answer = True
+        card.v_enabled.set(True)
+        card._toggle()
+        self.assertTrue(self.engine.settings.shock_enabled)
+        self.refresh()
+        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: armed")
+        card.v_enabled.set(False)
+        card._toggle()
+        self.assertFalse(self.engine.settings.shock_enabled)
+        self.assertEqual(len(fake_mb.asked), 2)       # switching it off does not ask
+        self.refresh()
+        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: off")
+
+    def test_shock_sliders_apply_on_release_and_keep_the_range_ordered(self):
+        card = self.app.shock
+        s = self.engine.settings
+        card.s_min._press(click(150))
+        card.s_min._up(click(150))                      # about 50%
+        self.assertAlmostEqual(s.shock_min_pct, 50, delta=2)
+        self.assertGreaterEqual(s.shock_max_pct, s.shock_min_pct)       # the highest end was pushed up with it
+        card.s_max._press(click(12))
+        card.s_max._up(click(12))                       # all the way left: 1%
+        self.assertEqual((s.shock_min_pct, s.shock_max_pct), (1, 1))
+        card.s_secs.release(12)
+        card.s_cool.release(25)
+        self.assertEqual((s.shock_seconds, s.shock_cooldown_s), (12, 25))
+        self.refresh()
+        self.assertIn("12 s", card.lbl_secs.cget("text"))
+        self.assertIn("25 s", card.lbl_cool.cget("text"))
+        self.assertIn("1% to 1%", card.lbl_power.cget("text"))
+        card.s_secs._user_set(30)
+        self.assertEqual(card.s_secs.value, 30.0)       # the slider tops out at 30 seconds
+        card.s_secs._user_set(99)
+        self.assertEqual(card.s_secs.value, 30.0)
+
+    def test_shock_channels_and_chatbox_switch(self):
+        card = self.app.shock
+        card.v_a.set(False)
+        card._on_channels()
+        self.assertEqual(self.engine.settings.shock_channels, "B")
+        card.v_b.set(False)
+        card._on_channels()                             # nothing left: refused and put back
+        self.assertEqual(self.engine.settings.shock_channels, "B")
+        self.assertTrue(card.v_b.get())
+        self.assertIn("at least one", self.app.msg.cget("text"))
+        card.v_chat.set(False)
+        card._on_chat()
+        self.assertFalse(self.engine.settings.chatbox_enabled)
+        self.refresh()
+        self.assertFalse(card.v_chat.get())
+
+    def test_shock_fields_validation_and_apply(self):
+        card = self.app.shock
+        old = self.engine.settings.chatbox_port
+        card.vars["chatbox_port"].set("abc")
+        card._apply()
+        self.assertEqual(self.engine.settings.chatbox_port, old)
+        self.assertIn("Invalid chatbox port", self.app.msg.cget("text"))
+        card.vars["chatbox_port"].set("70000")
+        card._apply()
+        self.assertEqual(self.engine.settings.chatbox_port, old)
+        card.vars["chatbox_port"].set("9100")
+        card.vars["osc_param_shock"].set("  Collar/Touch ")
+        card.vars["chatbox_text"].set("Zap {percent}%")
+        card._apply()
+        s = self.engine.settings
+        self.assertEqual((s.chatbox_port, s.osc_param_shock, s.chatbox_text), (9100, "Collar/Touch", "Zap {percent}%"))
+        self.assertEqual(card.vars["osc_param_shock"].get(), "Collar/Touch")
+
+    def test_shock_state_text_follows_the_trigger(self):
+        card = self.app.shock
+        self.engine.settings.chatbox_enabled = False    # this test is about the window, not the chatbox
+        self.refresh()
+        self.assertIn("Off", card.lbl_state.cget("text"))
+        self.engine.set_shock_enabled(True)
+        self.refresh()
+        self.assertIn("not connected", card.lbl_state.cget("text"))
+        self.engine.link.state = "connected"
+        self.refresh()
+        self.assertIn("waiting for a touch on ShockOsc/_all", card.lbl_state.cget("text"))
+        self.assertEqual(card.lbl_state.cget("fg").lower(), gui.GREEN.lower())
+        self.assertIn("none yet", card.lbl_last.cget("text"))
+        self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [True])
+        self.refresh()
+        self.assertIn("SHOCK", card.lbl_state.cget("text"))
+        self.assertEqual(card.lbl_state.cget("fg").lower(), gui.RED.lower())
+        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock: ACTIVE")
+        self.assertIn("%", card.lbl_last.cget("text"))
+        self.engine.emergency_stop("gui")
+        self.refresh()
+        self.assertIn("emergency stop", card.lbl_state.cget("text"))
+
+    def test_shock_test_buttons(self):
+        from coyote_vrc import osc as oscmod
+        card = self.app.shock
+        vrc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        vrc.bind(("127.0.0.1", 0))
+        vrc.settimeout(2.0)
+        try:
+            self.engine.settings.chatbox_port = vrc.getsockname()[1]
+            card._test_chatbox()
+            data, _ = vrc.recvfrom(4096)
+            self.assertEqual(oscmod.parse_message(data)[1][0], "Shock 20% (test)")   # the default range is 10..30
+            self.assertIn("Test message sent", self.app.msg.cget("text"))
+            card._test_shock()
+            self.assertIn("No shock: the trigger is off", self.app.msg.cget("text"))
+            self.engine.set_shock_enabled(True)
+            card._test_shock()
+            self.assertIn("not connected", self.app.msg.cget("text"))
+            self.engine.link.state = "connected"
+            card._test_shock()
+            self.assertIn("Test shock:", self.app.msg.cget("text"))
+            self.assertTrue(self.engine.control.shock_active())
+            data, _ = vrc.recvfrom(4096)
+            self.assertRegex(oscmod.parse_message(data)[1][0], r"^Shock \d+%$")
+        finally:
+            vrc.close()
 
     # ---- Bluetooth (simulado)
     def test_scan_connect_and_status(self):

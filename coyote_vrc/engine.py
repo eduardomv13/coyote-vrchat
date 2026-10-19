@@ -6,8 +6,9 @@ from typing import Optional
 from .api import ApiServer
 from .ble import AsyncThread, BleakTransport, CoyoteLink
 from .control import ControlError, Controller
-from .osc import OscListener
+from .osc import OscListener, OscSender
 from .settings import Settings, load_settings, save_settings
+from .shock import ShockTrigger, render_text
 
 OSC_PREFIX = "/avatar/parameters/"
 
@@ -37,6 +38,8 @@ class Engine:
         self.loop.start_and_wait()
         self.transport = transport or BleakTransport()
         self.link = CoyoteLink(self.control, self.settings, self.transport)
+        self.vrc_out = OscSender()   # to VRChat (chatbox)
+        self.shock = ShockTrigger(self.settings, self.control, lambda: self.link.state == "connected", self.vrc_out)
         self.osc: Optional[OscListener] = None
         self.osc_error = ""
         self.api: Optional[ApiServer] = None
@@ -59,6 +62,7 @@ class Engine:
             pass
         self.stop_osc()
         self.stop_api()
+        self.vrc_out.close()
         self.save()
         self.loop.stop()
 
@@ -93,6 +97,52 @@ class Engine:
             self.save()
         return changed
 
+    # ------------------------------------------------------------------ shock trigger (ShockOSC contact)
+    _SHOCK_KEYS = ("osc_param_shock", "shock_min_pct", "shock_max_pct", "shock_seconds", "shock_cooldown_s",
+                   "shock_channels", "chatbox_enabled", "chatbox_host", "chatbox_port", "chatbox_text")
+
+    def set_shock_enabled(self, on: bool) -> None:
+        on = bool(on)
+        if on == self.settings.shock_enabled:
+            return
+        self.settings.shock_enabled = on
+        self.control.log("Shock trigger " + ("ENABLED" if on else "disabled"))
+        if not on:   # also cancel a shock that is running right now
+            self.control.stop_shock("trigger switched off")
+            self.link.poke()
+
+    def configure_shock(self, **kw) -> set:
+        """Changes the shock-trigger settings (and the chatbox ones). Returns the keys that actually changed."""
+        unknown = set(kw) - set(self._SHOCK_KEYS)
+        if unknown:
+            raise ControlError("unknown setting: " + ", ".join(sorted(unknown)))
+        s = self.settings
+        before = {k: getattr(s, k) for k in self._SHOCK_KEYS}
+        for key, value in kw.items():
+            setattr(s, key, value)
+        # moving only one end of the range past the other pushes the other end along (instead of swapping them)
+        if "shock_min_pct" in kw and "shock_max_pct" not in kw and s.shock_min_pct > s.shock_max_pct:
+            s.shock_max_pct = s.shock_min_pct
+        if "shock_max_pct" in kw and "shock_min_pct" not in kw and s.shock_max_pct < s.shock_min_pct:
+            s.shock_min_pct = s.shock_max_pct
+        s.validate()
+        changed = {k for k in self._SHOCK_KEYS if getattr(s, k) != before[k]}
+        if changed:
+            self.save()
+        return changed
+
+    def shock_status(self) -> dict:
+        return self.shock.status()
+
+    def test_shock(self) -> dict:
+        """The same as a touch on the contact (it obeys every rule: switched on, connected, no pause, no emergency stop)."""
+        return self.shock.fire("gui")
+
+    def test_chatbox(self) -> bool:
+        s = self.settings
+        text = render_text(s.chatbox_text, (s.shock_min_pct + s.shock_max_pct) // 2, s.shock_seconds)
+        return self.shock.send_chatbox((text + " (test)")[:144])
+
     # ------------------------------------------------------------------ OSC
     def _on_osc(self, address: str, args: list) -> None:
         self.control.note_osc_packet()
@@ -116,6 +166,8 @@ class Engine:
                 hz = _osc_hz(args[0])
                 if hz is not None:
                     self.control.set_frequency("AB", hz, "osc")
+            elif s.osc_param_shock and name.lower() == s.osc_param_shock.lower():
+                self.shock.on_param(value >= 0.5)   # the ShockOSC contact (case-insensitive: _all / _All)
         except ControlError:
             pass  # emergency stop active etc.: ignore silently
 

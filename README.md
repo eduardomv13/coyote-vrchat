@@ -29,6 +29,10 @@ This software drives an **electro-stimulation device**. Use it responsibly:
 - Anything that can write to your avatar's parameters can change the intensity — including other players if you
   expose controls to them (for example a world-anchored panel). **Only let people you completely trust do that**, and
   keep the ceilings low.
+- **The shock trigger lets other players shock you.** If you switch it on, whoever can touch the contact on your avatar
+  fires a random shock. It is off every time the program starts and has to be switched on in the window. Keep its power
+  range low and its pause long, and only switch it on among people you trust (see
+  [Shock trigger](#shock-trigger-a-touch-on-the-shockosc-contact)).
 - Keep the **STOP ALL** button, the `CoyoteStop` parameter and the device's own physical controls within reach.
 - This is a hobby project provided **as is, with no warranty** (see [LICENSE](LICENSE)). You use it at your own risk.
 
@@ -42,13 +46,15 @@ an intensity ceiling, a latched emergency stop, and an optional watchdog. Detail
 - Direct Bluetooth LE connection to the Coyote 3.0 (V3 protocol), 100 ms command loop, automatic reconnection.
 - Receives VRChat OSC on UDP port 9001: intensity per channel, one frequency for both channels, and an emergency stop.
 - Manual control window: per-channel sliders, frequency, pulse width, 8 waveform patterns.
+- **Shock trigger** (optional, off by default): a touch on the avatar's `ShockOsc/_all` contact fires one timed shock at a
+  random power you choose (a lowest and a highest percentage, 1 to 30 s), and the power is shown in the VRChat chatbox.
 - Safety layer: intensity ceiling, maximum rise speed, latched emergency stop, OSC watchdog, zero on (re)connect.
 - Optional AI control through a localhost-only, token-protected API and an MCP server (Claude Code / Claude Desktop),
   with its own lower ceiling.
 - An optional **in-game control panel for your avatar** (sliders, buttons, frequency; a Unity package that installs with
   Modular Avatar). It is a separate piece: see [unity/README.md](unity/README.md).
-- 182 automated tests (protocol, Bluetooth with a simulated Coyote, OSC, API, MCP, interface logic, and checks on the
-  Unity package that do not need Unity).
+- 225 automated tests (protocol, Bluetooth with a simulated Coyote, OSC, API, MCP, interface logic, the shock trigger,
+  and checks on the Unity package that do not need Unity).
 
 **Tested on:** Windows 11, a real Coyote 3.0, and VRChat on PC. The automated tests use a simulated Coyote. Other
 operating systems are untested (the Bluetooth library, `bleak`, is cross-platform, but nothing here has been tried on
@@ -99,6 +105,7 @@ API only), `--settings <file>` (use a different settings file).
 | VRChat OSC | Port, address and parameter names; shows whether packets are arriving |
 | Patterns | Constant, Breathing, Pulses, Heartbeat, Ramp, Frequency sweep, Random, Staccato; speed, channels and A/B alternation |
 | Safety limits | Intensity ceiling, maximum rise speed, OSC watchdog |
+| Shock trigger | Switches the ShockOSC-contact trigger on/off; lowest and highest random power, duration (up to 30 s), pause, channels, chatbox message and tests |
 | AI | Turns AI control on/off, AI ceiling, command to register in Claude Code |
 | Log | Everything that happened (connections, stops, AI actions…) |
 
@@ -120,12 +127,42 @@ AI.
 | `CoyoteStop` | bool | `true` triggers the same emergency stop as the window (stays latched until you re-enable it) |
 | `CoyoteFreq` | **int**, Hz (1–100) | frequency of **both** channels at once. Only integers count: `0` and floats are ignored (a parameter that is not initialized yet arrives as 0 and must not drop the frequency to 1 Hz). Values above 100 become 100 |
 
+| `ShockOsc/_all` | bool | a touch on the avatar's contact: fires **one** shock if the [shock trigger](#shock-trigger-a-touch-on-the-shockosc-contact) is switched on (the name is compared ignoring upper/lower case) |
+
 The names can be changed in the window. Any VRChat packet counts as "I am alive": if you enable the **watchdog**
 (Safety limits), the channels commanded by VRChat go back to zero when it stays silent for X seconds (for example,
 if the game freezes).
 
 **Only one program can listen on port 9001.** If "another OSC program may be using this port" shows up, close any
 other OSC tool, or use an OSC router.
+
+### Shock trigger: a touch on the ShockOSC contact
+
+Avatars set up for ShockOSC (OpenShock) have a contact receiver whose parameter is `ShockOsc/_all`, a bool that is on while
+the contact is touched. This program can listen to it: **when someone touches the contact, it fires one shock at a random
+power**, for a few seconds, on the channels you pick, and shows the power in the VRChat chatbox. It is the **Shock trigger**
+card in the window.
+
+- **Random power:** a lowest and a highest slider (1 to 100 %). Every touch draws a new whole-number percentage between
+  them. The percentage is of the *intensity ceiling*, the same scale as `CoyoteA`: with the default ceiling of 200, 30 % is 60.
+- **Duration:** 1 to 30 seconds. **Pause:** 0 to 120 seconds after a shock before the next one can start (10 s by default).
+  **Channels:** A, B or both.
+- **Chatbox:** when a shock starts, the program sends `Shock 37%` (the text is editable; `{percent}` and `{seconds}` are
+  replaced) to VRChat's OSC input, which listens on port **9000** (OSC has to be enabled in VRChat; the port is a field in the
+  card). VRChat drops chatbox messages that come in too fast, so at most one is sent every 1.6 s. **Test chatbox** sends a
+  test message without any shock.
+- **One shock per touch.** A contact that stays on does not repeat: it has to turn off and on again. A touch while a shock is
+  running, or during the pause, is ignored.
+- **It never fires** unless the trigger is ticked, the Coyote is connected and the emergency stop is not active, and nothing is
+  announced for a shock that did not happen. The card and the log say why a touch was ignored.
+- **It is a floor, not a replacement.** During the shock each chosen channel is held at *at least* the drawn power: what the
+  window, a panel or the AI ask for is never lowered, and afterwards the channel goes back to it. The ceiling and the rise
+  limit still apply (with the default rise limit of 100 per second, a 100 % shock takes 2 s to reach full power; set the limit
+  to unlimited if you want instant shocks), and **STOP ALL** cancels it at once.
+- **It starts off every time**, and ticking it asks for confirmation, because other players pull this trigger, not you.
+  Switching it off also cancels a shock that is running.
+- The parameter name can be changed in the card (some avatars spell it `ShockOsc/_All`; the comparison ignores upper/lower
+  case).
 
 ### Testing without VRChat
 
@@ -135,6 +172,7 @@ With the program open, send fake avatar parameters from another terminal:
 python tools/send_test_osc.py --a 0.05            # channel A at 5% of the ceiling
 python tools/send_test_osc.py --a 0.05 --b 0.05 --freq 60
 python tools/send_test_osc.py --stop              # emergency stop
+python tools/send_test_osc.py --shock             # touches the ShockOsc/_all contact (needs the shock trigger switched on)
 python tools/send_test_osc.py --a 0 --b 0         # back to zero
 ```
 
@@ -200,6 +238,9 @@ If you want to use the API directly (other tools): `GET /status`, `GET /patterns
 - Increasing is gradual (default: 100 per second; 0 → 200 in 2 s). Decreasing is immediate.
 - The emergency stop is **latched**: only the window re-enables it. It works through the button, `Esc`, the VRChat
   `CoyoteStop` parameter and the AI.
+- The shock trigger is off at every start, asks for confirmation when you switch it on, fires one shock per touch (never
+  longer than 30 s, with a pause between shocks), only with the Coyote connected and no emergency stop, and always inside
+  the ceiling and the rise limit.
 - The AI API only accepts connections from this same PC, with a token, and refuses web pages (a site open in the
   browser cannot send a shock).
 - The `Esc` key only works with the program window focused. Inside the game, use the `CoyoteStop` parameter (and the
@@ -216,6 +257,8 @@ If you want to use the API directly (other tools): `GET /status`, `GET /patterns
 | OSC "receiving" never shows up | Is OSC enabled in VRChat? Is port 9001 free? Does the avatar have the parameters? After adding parameters, use *Options → OSC → Reset Config* in VRChat and re-select the avatar. See [docs/AVATAR_SETUP.md](docs/AVATAR_SETUP.md) |
 | OSC shows packets but nothing changes | Only parameters named exactly `CoyoteA`/`CoyoteB`/`CoyoteFreq`/`CoyoteStop` count (names can be changed in the OSC panel). `CoyoteFreq` must be an **int** parameter |
 | Frequency never changes | `CoyoteFreq` ignores `0` and floats on purpose; send an int between 1 and 100 |
+| Touching the contact does nothing | Is *Shock trigger* ticked (it starts off every time) and the Coyote connected? The card and the log say why a touch was ignored. Is the parameter name right (`ShockOsc/_all` on your avatar)? Is it still in the pause after the last shock? |
+| The chatbox message does not appear | Is OSC enabled in VRChat? VRChat normally listens for OSC input on port 9000; if your setup changed that (an OSC router, another program holding 9000), put the right port in the card. Try *Test chatbox*. VRChat can also hide chatbox messages (check its settings) |
 | "tkinter missing" | Reinstall Python with *tcl/tk and IDLE* checked (or use `--headless`) |
 | My configuration got lost | It lives in `%APPDATA%\CoyoteVRChat\settings.json` (if it gets corrupted, the program keeps a `.bak` copy and starts over) |
 
@@ -244,7 +287,8 @@ coyote_vrc/
   ble.py                     Bluetooth connection (bleak), 100 ms sending, reconnection
   control.py                 channel state, limits, ramp, emergency stop, patterns
   patterns.py                the 8 patterns
-  osc.py                     OSC reader (UDP)
+  osc.py                     OSC reader (UDP) and sender (VRChat chatbox)
+  shock.py                   the ShockOSC-contact trigger: random power, timing, chatbox message
   api.py / mcp_server.py     bridge for the AI
   engine.py                  wires everything together
   gui.py                     the window

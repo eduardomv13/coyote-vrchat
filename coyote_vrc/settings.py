@@ -48,6 +48,18 @@ class Settings:
     osc_param_stop: str = "CoyoteStop"
     osc_param_freq: str = "CoyoteFreq"   # Int in Hz (1..100) -> frequency of BOTH channels
     osc_timeout_s: int = 0            # 0 = off; >0 zeroes the OSC channels if VRChat goes silent
+    # --- shock trigger: someone touches the avatar's ShockOSC contact -> a timed shock at a random power
+    osc_param_shock: str = "ShockOsc/_all"  # bool contact on the avatar (compared ignoring upper/lower case)
+    shock_enabled: bool = False       # NOT persisted: always starts off
+    shock_min_pct: int = 10           # the power is drawn at random between these two, in % of the intensity ceiling
+    shock_max_pct: int = 30
+    shock_seconds: int = 3            # how long one shock lasts (1..30)
+    shock_cooldown_s: int = 10        # pause after a shock before the next one can start (0..120)
+    shock_channels: str = "AB"        # "A", "B" or "AB"
+    chatbox_enabled: bool = True      # say the power in the VRChat chatbox when a shock starts
+    chatbox_host: str = "127.0.0.1"
+    chatbox_port: int = 9000          # VRChat listens for OSC input here (its output goes to 9001)
+    chatbox_text: str = "Shock {percent}%"   # {percent} and {seconds} are replaced
     # --- AI
     ai_enabled: bool = False          # NOT persisted: always starts off
     ai_cap: int = 50                  # maximum intensity the AI may request
@@ -67,12 +79,25 @@ class Settings:
         self.osc_timeout_s = _clamp_int(self.osc_timeout_s, 0, 3600, 0)
         self.ai_cap = _clamp_int(self.ai_cap, 0, 200, 50)
         self.default_width = _clamp_int(self.default_width, 0, 100, 100)
+        self.shock_min_pct = _clamp_int(self.shock_min_pct, 1, 100, 10)
+        self.shock_max_pct = _clamp_int(self.shock_max_pct, 1, 100, 30)
+        if self.shock_min_pct > self.shock_max_pct:
+            self.shock_min_pct, self.shock_max_pct = self.shock_max_pct, self.shock_min_pct
+        self.shock_seconds = _clamp_int(self.shock_seconds, 1, 30, 3)
+        self.shock_cooldown_s = _clamp_int(self.shock_cooldown_s, 0, 120, 10)
+        letters = "".join(c for c in "AB" if c in str(self.shock_channels).upper())
+        self.shock_channels = letters or "AB"
+        self.chatbox_port = _clamp_int(self.chatbox_port, 1, 65535, 9000)
+        self.chatbox_host = str(self.chatbox_host or "127.0.0.1").strip() or "127.0.0.1"
+        self.chatbox_text = str(self.chatbox_text if self.chatbox_text is not None else "")[:100]
+        self.shock_enabled = bool(self.shock_enabled)
+        self.chatbox_enabled = bool(self.chatbox_enabled)
         try:
             self.default_freq_hz = max(1.0, min(100.0, float(self.default_freq_hz)))
         except (TypeError, ValueError):
             self.default_freq_hz = 50.0
         self.osc_host = str(self.osc_host or "127.0.0.1")
-        for name in ("osc_param_a", "osc_param_b", "osc_param_stop", "osc_param_freq"):
+        for name in ("osc_param_a", "osc_param_b", "osc_param_stop", "osc_param_freq", "osc_param_shock"):
             setattr(self, name, str(getattr(self, name) or "").strip())
         self.ai_enabled = bool(self.ai_enabled)
         self.osc_enabled = bool(self.osc_enabled)
@@ -97,6 +122,7 @@ def load_settings(path: Optional[Path] = None) -> Settings:
                 pass
             settings = Settings()
     settings.ai_enabled = False  # safety: AI control always starts off
+    settings.shock_enabled = False  # safety: the shock trigger (other players can fire it) always starts off
     settings.validate()
     if not settings.api_token:
         settings.api_token = secrets.token_urlsafe(24)
@@ -108,6 +134,7 @@ def save_settings(settings: Settings, path: Optional[Path] = None) -> None:
     path = Path(path) if path else default_settings_path()
     data = asdict(settings)
     data["ai_enabled"] = False
+    data["shock_enabled"] = False
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".json.tmp")

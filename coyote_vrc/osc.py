@@ -98,6 +98,39 @@ def encode_message(address: str, *args) -> bytes:
     return _enc_str(address) + _enc_str(tags) + payload
 
 
+CHATBOX_ADDRESS = "/chatbox/input"
+CHATBOX_MAX_CHARS = 144   # VRChat's limit for one chatbox message
+
+
+class OscSender:
+    """Sends OSC messages to VRChat over UDP, fire and forget (VRChat listens for OSC input on port 9000 by default)."""
+
+    def __init__(self) -> None:
+        self._sock: Optional[socket.socket] = None
+        self._lock = threading.Lock()
+
+    def send(self, host: str, port: int, address: str, *args) -> None:
+        """Raises OSError when the host cannot be resolved or the socket fails."""
+        data = encode_message(address, *args)
+        with self._lock:
+            if self._sock is None:
+                self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._sock.sendto(data, (host, int(port)))
+
+    def send_chatbox(self, host: str, port: int, text: str, immediate: bool = True, sound: bool = False) -> None:
+        """/chatbox/input <text> <send immediately> <notification sound>. `immediate` skips the keyboard."""
+        self.send(host, port, CHATBOX_ADDRESS, text[:CHATBOX_MAX_CHARS], bool(immediate), bool(sound))
+
+    def close(self) -> None:
+        with self._lock:
+            if self._sock is not None:
+                try:
+                    self._sock.close()
+                except OSError:
+                    pass
+                self._sock = None
+
+
 class OscListener:
     """Listens on UDP and calls handler(address, args) for each message."""
 

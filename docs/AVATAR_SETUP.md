@@ -82,6 +82,18 @@ The names can be changed in the program's OSC panel if you prefer other ones.
 
 No VRChat at hand? `python tools/send_test_osc.py --a 0.05` sends the same messages. See the README.
 
+## Optional: a touch contact that fires a shock
+
+If your avatar already has the `ShockOsc/_all` parameter (a bool contact receiver, as set up by the ShockOSC / OpenShock
+prefabs), the program can fire a shock when someone touches it: see
+[Shock trigger](../README.md#shock-trigger-a-touch-on-the-shockosc-contact). There is nothing to add to the avatar.
+
+If you want to build the contact yourself: add a **VRC Contact Receiver** to a small object on the avatar, type *Constant*,
+**Allow Others** on, a collision tag such as `Finger` or `Hand`, parameter `ShockOsc/_all`, and a **Bool** `ShockOsc/_all`
+(not saved, not synced) to the Expression Parameters. The contact only sets the bool; the program decides what to do with it.
+(The author has not tried building this contact: the author's avatar already had the parameter.) As with the panel, the people
+who can touch it can shock you: switch the trigger on only among people you trust.
+
 ## Optional: reading values back with OSCQuery
 
 VRChat advertises an OSCQuery HTTP server (look for "OSCQuery on <port>" in its log). `GET

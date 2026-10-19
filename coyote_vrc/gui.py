@@ -706,6 +706,216 @@ class LimitsCard(Card):
         self._wd_label(self.s_wd.value)
 
 
+class ShockCard(Card):
+    """The ShockOSC contact trigger: a touch on the avatar's contact -> a random shock for a few seconds."""
+
+    def __init__(self, parent, app):
+        super().__init__(parent, "SHOCK TRIGGER (SHOCKOSC CONTACT)")
+        self.app = app
+        s = app.engine.settings
+        b = self.body
+        self.v_enabled = tk.BooleanVar(value=False)
+        make_check(b, "Enabled: a touch fires a random shock (always starts off)", self.v_enabled,
+                   self._toggle).pack(fill="x")
+        self.lbl_state = make_label(b, "", fg=DIM, wraplength=330, justify="left")
+        self.lbl_state.pack(fill="x", pady=(2, 6))
+
+        self.lbl_power = make_label(b, "", fg=TEXT, wraplength=330, justify="left")
+        self.lbl_power.pack(fill="x")
+        make_label(b, "Lowest power (%)", fg=DIM, font=(FONT, 9)).pack(fill="x")
+        self.s_min = GoldSlider(b, 1, 100, value=s.shock_min_pct, command=self._on_min, release=self._apply_range)
+        self.s_min.pack(fill="x")
+        make_label(b, "Highest power (%)", fg=DIM, font=(FONT, 9)).pack(fill="x")
+        self.s_max = GoldSlider(b, 1, 100, value=s.shock_max_pct, command=self._on_max, release=self._apply_range)
+        self.s_max.pack(fill="x")
+
+        self.lbl_secs = make_label(b, "", fg=TEXT)
+        self.lbl_secs.pack(fill="x", pady=(4, 0))
+        self.s_secs = GoldSlider(b, 1, 30, value=s.shock_seconds, command=self._secs_label,
+                                 release=lambda v: self.app.engine.configure_shock(shock_seconds=int(v)))
+        self.s_secs.pack(fill="x")
+
+        self.lbl_cool = make_label(b, "", fg=TEXT)
+        self.lbl_cool.pack(fill="x", pady=(4, 0))
+        self.s_cool = GoldSlider(b, 0, 120, value=s.shock_cooldown_s, command=self._cool_label,
+                                 release=lambda v: self.app.engine.configure_shock(shock_cooldown_s=int(v)))
+        self.s_cool.pack(fill="x")
+
+        row = tk.Frame(b, bg=PANEL)
+        row.pack(fill="x", pady=(4, 0))
+        make_label(row, "Shock channels:", fg=DIM).pack(side="left")
+        self.v_a = tk.BooleanVar(value="A" in s.shock_channels)
+        self.v_b = tk.BooleanVar(value="B" in s.shock_channels)
+        make_check(row, "A", self.v_a, self._on_channels).pack(side="left", padx=(6, 0))
+        make_check(row, "B", self.v_b, self._on_channels).pack(side="left", padx=(6, 0))
+
+        self.v_chat = tk.BooleanVar(value=s.chatbox_enabled)
+        make_check(b, "Say the power in the VRChat chatbox when a shock starts", self.v_chat,
+                   self._on_chat).pack(fill="x", pady=(4, 0))
+
+        grid = tk.Frame(b, bg=PANEL)
+        grid.pack(fill="x", pady=4)
+        self.vars = {}
+        rows = (("Contact parameter (bool)", "osc_param_shock", 16),
+                ("Chatbox text ({percent}, {seconds})", "chatbox_text", 16),
+                ("Chatbox port (VRChat listens on 9000)", "chatbox_port", 8))
+        for r, (text, attr, width) in enumerate(rows):
+            make_label(grid, text, fg=DIM).grid(row=r, column=0, sticky="w", pady=2)
+            var = tk.StringVar()
+            self.vars[attr] = var
+            make_entry(grid, var, width).grid(row=r, column=1, sticky="e", padx=(8, 0), pady=2)
+        grid.columnconfigure(0, weight=1)
+        self._load_fields()
+
+        btns = tk.Frame(b, bg=PANEL)
+        btns.pack(fill="x", pady=(2, 0))
+        make_button(btns, "Apply", self._apply, "gold").pack(side="left", padx=(0, 4))
+        make_button(btns, "Test chatbox", self._test_chatbox).pack(side="left", padx=(0, 4))
+        make_button(btns, "Test shock now", self._test_shock).pack(side="left")
+        self.lbl_last = make_label(b, "", fg=DIM, font=(FONT, 9), wraplength=330, justify="left")
+        self.lbl_last.pack(fill="x", pady=(4, 0))
+        make_label(b, "One shock per touch (a contact that stays on does not repeat), then the pause. The power is a "
+                      "percentage of the intensity ceiling and follows the rise limit; STOP ALL cancels it. "
+                      "Whoever can touch the contact on your avatar can fire it.",
+                   fg=DIM, font=(FONT, 9), wraplength=330, justify="left").pack(fill="x", pady=(4, 0))
+
+    # ---- helpers
+    def _units(self, pct):
+        cap = self.app.engine.control.cap("gui")
+        return 0 if cap <= 0 else max(1, int(round(pct * cap / 100.0)))
+
+    def _load_fields(self):
+        s = self.app.engine.settings
+        for attr, var in self.vars.items():
+            var.set(str(getattr(s, attr)))
+
+    def _power_label(self):
+        lo, hi = int(self.s_min.value), int(self.s_max.value)
+        cap = self.app.engine.control.cap("gui")
+        text = f"Random power: {lo}% to {hi}% of the ceiling  =  {self._units(lo)} to {self._units(hi)}"
+        if cap != 200:
+            text += f"  (ceiling {cap})"
+        set_text(self.lbl_power, text)
+
+    def _secs_label(self, v):
+        set_text(self.lbl_secs, f"Each shock lasts {v:.0f} s  (up to 30)")
+
+    def _cool_label(self, v):
+        set_text(self.lbl_cool, "Pause after a shock: none" if v <= 0 else f"Pause after a shock: {v:.0f} s")
+
+    # ---- actions
+    def _toggle(self):
+        want = bool(self.v_enabled.get())
+        e = self.app.engine
+        if want:
+            s = e.settings
+            lo, hi = s.shock_min_pct, s.shock_max_pct
+            ok = messagebox.askyesno(
+                "Enable the shock trigger",
+                f"Whoever touches the contact {s.osc_param_shock} on your avatar will shock you.\n\n"
+                f"Power: a random value between {lo}% and {hi}% of your intensity ceiling "
+                f"({self._units(lo)} to {self._units(hi)}), for {s.shock_seconds} s, on channel(s) {s.shock_channels}, "
+                f"with {s.shock_cooldown_s} s between shocks.\n\n"
+                "The ceiling, the rise limit and STOP ALL still apply. It starts off every time you open the program.\n\n"
+                "Enable?",
+                parent=self.app,
+            )
+            if not ok:
+                self.v_enabled.set(False)
+                return
+        e.set_shock_enabled(want)
+
+    def _on_min(self, v):
+        if v > self.s_max.value:
+            self.s_max.set(v)
+        self._power_label()
+
+    def _on_max(self, v):
+        if v < self.s_min.value:
+            self.s_min.set(v)
+        self._power_label()
+
+    def _apply_range(self, _v):
+        self.app.engine.configure_shock(shock_min_pct=int(self.s_min.value), shock_max_pct=int(self.s_max.value))
+
+    def _on_channels(self):
+        letters = "".join(n for n, var in (("A", self.v_a), ("B", self.v_b)) if var.get())
+        if not letters:
+            self.app.flash("Pick at least one channel for the shock.", RED)
+            self.v_a.set("A" in self.app.engine.settings.shock_channels)
+            self.v_b.set("B" in self.app.engine.settings.shock_channels)
+            return
+        self.app.engine.configure_shock(shock_channels=letters)
+
+    def _on_chat(self):
+        self.app.engine.configure_shock(chatbox_enabled=bool(self.v_chat.get()))
+
+    def _apply(self):
+        try:
+            port = int(self.vars["chatbox_port"].get().strip())
+            if not 1 <= port <= 65535:
+                raise ValueError
+        except ValueError:
+            self.app.flash("Invalid chatbox port: use a number from 1 to 65535.", RED)
+            return
+        self.app.engine.configure_shock(
+            osc_param_shock=self.vars["osc_param_shock"].get().strip(),
+            chatbox_text=self.vars["chatbox_text"].get(),
+            chatbox_port=port,
+        )
+        self._load_fields()
+        self.app.flash("Shock trigger settings applied.", GOLD)
+
+    def _test_chatbox(self):
+        s = self.app.engine.settings
+        if self.app.engine.test_chatbox():
+            self.app.flash(f"Test message sent to the VRChat chatbox ({s.chatbox_host}:{s.chatbox_port}).", GOLD)
+        else:
+            self.app.flash("Could not send the chatbox message (see the log).", RED)
+
+    def _test_shock(self):
+        res = self.app.engine.test_shock()
+        if res["fired"]:
+            self.app.flash(f"Test shock: {res['percent']}% for {res['seconds']:.0f} s.", GOLD)
+        else:
+            self.app.flash("No shock: " + res["reason"], RED)
+
+    # ---- periodic refresh
+    def refresh(self, st, lim):
+        s = self.app.engine.settings
+        if self.v_enabled.get() != st["enabled"]:
+            self.v_enabled.set(st["enabled"])
+        if not (self.s_min.dragging or self.s_max.dragging):
+            self.s_min.set(s.shock_min_pct)
+            self.s_max.set(s.shock_max_pct)
+        self.s_secs.set(s.shock_seconds)
+        self.s_cool.set(s.shock_cooldown_s)
+        for var, letter in ((self.v_a, "A"), (self.v_b, "B")):
+            if var.get() != (letter in s.shock_channels):
+                var.set(letter in s.shock_channels)
+        if self.v_chat.get() != s.chatbox_enabled:
+            self.v_chat.set(s.chatbox_enabled)
+        self._power_label()
+        self._secs_label(self.s_secs.value)
+        self._cool_label(self.s_cool.value)
+
+        if not st["enabled"]:
+            set_text(self.lbl_state, "● Off: touching the contact does nothing", DIM)
+        elif st["active"]:
+            lv = st["level"]
+            set_text(self.lbl_state,
+                     f"● SHOCK  A {lv['A']:.0f}  ·  B {lv['B']:.0f}  ·  {st['remaining_s']:.1f} s left", RED)
+        elif st["estopped"]:
+            set_text(self.lbl_state, "● Armed, but the emergency stop is active: touches are ignored", RED)
+        elif not st["connected"]:
+            set_text(self.lbl_state, "● Armed, but the Coyote is not connected: touches are ignored", GOLD)
+        elif st["cooldown_s"] > 0:
+            set_text(self.lbl_state, f"● Pausing between shocks: {st['cooldown_s']:.0f} s", GOLD)
+        else:
+            set_text(self.lbl_state, f"● Armed: waiting for a touch on {s.osc_param_shock or '(no parameter set)'}", GREEN)
+        set_text(self.lbl_last, "Last shock: " + (st["last"] or "none yet"))
+
+
 class LogCard(Card):
     MAX_LINES = 400
 
@@ -782,7 +992,8 @@ class App(tk.Tk):
         self.chip_ble = Chip(chips)
         self.chip_osc = Chip(chips)
         self.chip_ai = Chip(chips)
-        for chip in (self.chip_ble, self.chip_osc, self.chip_ai):
+        self.chip_shock = Chip(chips)
+        for chip in (self.chip_ble, self.chip_osc, self.chip_ai, self.chip_shock):
             chip.pack(side="left")
         tk.Frame(self, bg=GOLD_DIM, height=1).pack(side="top", fill="x", padx=14)
 
@@ -801,9 +1012,10 @@ class App(tk.Tk):
         self.osc = OscCard(cols[1], self)
         self.pat = PatternCard(cols[1], self)
         self.limits = LimitsCard(cols[1], self)
+        self.shock = ShockCard(cols[2], self)
         self.ai = AiCard(cols[2], self)
         self.log = LogCard(cols[2])
-        for card in (self.bt, self.panel_a, self.panel_b, self.osc, self.pat, self.limits, self.ai):
+        for card in (self.bt, self.panel_a, self.panel_b, self.osc, self.pat, self.limits, self.shock, self.ai):
             card.pack(fill="x", pady=(0, 10))
         self.log.pack(fill="both", expand=True)
 
@@ -894,6 +1106,13 @@ class App(tk.Tk):
             self.chip_ai.show(GOLD, f"AI: active (up to {min(lim['ai_cap'], lim['max_intensity'])})")
         else:
             self.chip_ai.show(DIM, "AI: disabled")
+        shock = e.shock_status()
+        if shock["active"]:
+            self.chip_shock.show(RED, "Shock: ACTIVE")
+        elif shock["enabled"]:
+            self.chip_shock.show(GOLD, "Shock trigger: armed")
+        else:
+            self.chip_shock.show(DIM, "Shock trigger: off")
 
         self.panel_a.refresh(snap["channels"]["A"], lim["max_intensity"], estop)
         self.panel_b.refresh(snap["channels"]["B"], lim["max_intensity"], estop)
@@ -901,6 +1120,7 @@ class App(tk.Tk):
         self.osc.refresh(osc, snap["osc"])
         self.pat.refresh(snap["pattern"])
         self.limits.refresh(lim)
+        self.shock.refresh(shock, lim)
         api = e.api
         self.ai.refresh(lim, snap["ai_last_action"], api is not None, e.api_error,
                         api.port if api is not None else e.settings.api_port)
