@@ -17,3 +17,6 @@ Thumbs.db
 settings.json
 *.bak
 *.bak-*
+
+# Build output
+.venv-build/

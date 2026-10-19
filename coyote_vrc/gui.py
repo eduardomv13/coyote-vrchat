@@ -10,7 +10,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox
 
-from . import mcp_register, patterns, protocol
+from . import mcp_register, patterns, protocol, resources
 from .control import ControlError
 from .uimath import clamp, value_from_x, x_from_value
 
@@ -584,10 +584,13 @@ class AiCard(Card):
         return Path(__file__).resolve().parent.parent / "coyote_mcp.py"
 
     def mcp_command(self):
-        return f'claude mcp add --scope user coyote -- "{mcp_register.python_for_mcp()}" "{self.mcp_script()}"'
+        command, args = mcp_register.mcp_launcher(self.mcp_script())
+        parts = [f'"{command}"'] + [a if a.startswith("--") else f'"{a}"' for a in args]
+        return "claude mcp add --scope user coyote -- " + " ".join(parts)
 
     def _register_desktop(self):
-        results = mcp_register.register_desktop(mcp_register.python_for_mcp(), str(self.mcp_script()))
+        command, args = mcp_register.mcp_launcher(self.mcp_script())
+        results = mcp_register.register_desktop(command, "", args=args)
         good = [r for r in results if r.action != "error"]
         for r in results:
             self.app.engine.control.log(
@@ -968,6 +971,10 @@ class App(tk.Tk):
         self._refresh_errors = 0
 
         self.title("Coyote × VRChat")
+        try:    # the logo in the title bar and the taskbar; a missing file must never stop the program
+            self.iconbitmap(default=str(resources.asset_path("coyote.ico")))
+        except Exception:
+            pass
         self.configure(bg=BG)
         width = max(900, min(1200, self.winfo_screenwidth() - 80))
         height = max(560, min(820, self.winfo_screenheight() - 120))

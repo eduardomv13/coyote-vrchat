@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/coyote.png" width="128" alt="Coyote × VRChat logo (temporary)"></p>
+
 # Coyote × VRChat
 
 [![CI](https://github.com/eduardomv13/coyote-vrchat/actions/workflows/ci.yml/badge.svg)](https://github.com/eduardomv13/coyote-vrchat/actions/workflows/ci.yml)
@@ -53,8 +55,9 @@ an intensity ceiling, a latched emergency stop, and an optional watchdog. Detail
   with its own lower ceiling.
 - An optional **in-game control panel for your avatar** (sliders, buttons, frequency; a Unity package that installs with
   Modular Avatar). It is a separate piece: see [unity/README.md](unity/README.md).
-- 237 automated tests (protocol, Bluetooth with a simulated Coyote, OSC, API, MCP, interface logic, the shock trigger,
-  and checks on the Unity package that do not need Unity).
+- **One file to run**: `CoyoteVRChat.exe` (no Python needed), with its own logo. See [Install](#1-install).
+- 255 automated tests (protocol, Bluetooth with a simulated Coyote, OSC, API, MCP, interface logic, the shock trigger,
+  the packaging, and checks on the Unity package that do not need Unity).
 
 **Tested on:** Windows 11, a real Coyote 3.0, and VRChat on PC. The automated tests use a simulated Coyote. Other
 operating systems are untested (the Bluetooth library, `bleak`, is cross-platform, but nothing here has been tried on
@@ -64,12 +67,37 @@ Linux or macOS).
 
 ## 1. Install
 
-You need **Windows 10/11 with Bluetooth LE** and **Python 3.10 or newer**
-(<https://www.python.org/downloads/> — during installation, check *Add python.exe to PATH*).
+You need **Windows 10/11 with Bluetooth LE**.
 
-**Easy way:** download the newest numbered version from the [Releases](https://github.com/eduardomv13/coyote-vrchat/releases)
-page (every version stays there; see the [changelog](CHANGELOG.md)) or clone this repository, and double-click `run.bat`. The first time it creates a `.venv`
-folder and installs the only dependency (`bleak`, the Bluetooth library). After that it just opens the program.
+### The easy way: the `.exe` (no Python)
+
+1. Download `CoyoteVRChat-<version>.exe` from the [Releases](https://github.com/eduardomv13/coyote-vrchat/releases) page
+   (every version stays there; see the [changelog](CHANGELOG.md)). Put it anywhere you like — it is a single file.
+2. Double-click it. The window opens (the first start takes a few seconds, because the file unpacks itself).
+
+Things to know about the `.exe`:
+
+- **Windows SmartScreen** will probably say *"Windows protected your PC"*, because the file is not code-signed (a
+  certificate costs money, and this is a hobby project). Click **More info → Run anyway**. Some antivirus programs also
+  flag unsigned programs made with PyInstaller that way; if you do not trust the file, check it or build it yourself (see
+  [Building the .exe yourself](#building-the-exe-yourself)). Every release lists the file's **SHA-256** in `SHA256SUMS.txt`; to compare:
+  `Get-FileHash .\CoyoteVRChat-<version>.exe -Algorithm SHA256` in PowerShell.
+- The logo is a **temporary**, original drawing of a wolf's head in black and gold — it is not DG-LAB's artwork. To use
+  another one, replace `assets/coyote.ico` and `assets/coyote.png` and build again.
+- Your settings live in `%APPDATA%\CoyoteVRChat\settings.json`, like with the Python version. If an earlier copy of the
+  program had been run from the **Microsoft Store** version of Python, Windows kept that copy's settings in a private
+  folder; the first time the `.exe` starts without settings of its own, it copies them over once, so your ceilings and
+  your API token do not silently go back to the defaults.
+- `CoyoteVRChat.exe --selftest` (from a terminal) checks that everything the program needs is present and that Windows
+  Bluetooth answers, then exits. `--version` prints the version. The other options are listed below.
+- It is the same program as the Python version, packaged with PyInstaller. It does not download anything when it runs.
+
+### Running it from the source (Python)
+
+You need **Python 3.10 or newer** (<https://www.python.org/downloads/> — during installation, check *Add python.exe to PATH*).
+
+Clone this repository (or download the source from a release) and double-click `run.bat`. The first time it creates a
+`.venv` folder and installs the only dependency (`bleak`, the Bluetooth library). After that it just opens the program.
 
 **Manual way** (in a terminal, inside the project folder):
 
@@ -82,8 +110,10 @@ py -3 -m venv .venv
 Just want to look at the window without the device? `python main.py --simulate` opens the program with a fake
 Coyote.
 
-Command-line options: `--simulate` (fake Coyote), `--connect` (connect on startup), `--headless` (no window, OSC and
-API only), `--settings <file>` (use a different settings file).
+Command-line options (the same for `CoyoteVRChat.exe`): `--simulate` (fake Coyote), `--connect` (connect on startup),
+`--headless` (no window, OSC and API only), `--settings <file>` (use a different settings file), `--selftest` (check the
+installation and Bluetooth, then exit), `--version`, and `--mcp` (runs the MCP server for an AI; Claude starts it by
+itself, see [AI control](#6-ai-control-claude-code--claude-desktop)).
 
 ## 2. First use (take it slow)
 
@@ -207,6 +237,8 @@ There are **two places** where Claude can be registered, and they are independen
 - **Claude Code in the terminal:** in the **AI** panel, click **Copy MCP command**, paste it into a terminal and
   press Enter (only once). The command looks like this:
   `claude mcp add --scope user coyote -- "<python>" "<folder>\coyote_mcp.py"`
+  (with the packaged `.exe` it is `claude mcp add --scope user coyote -- "<folder>\CoyoteVRChat.exe" --mcp`: the same
+  file is both the window and the MCP server, so no Python is needed. If you move the `.exe`, register it again.)
   Check with `claude mcp list` (or `/mcp` inside Claude Code). It applies to **new** terminal sessions.
 - **Claude Desktop app:** click **Register in the Claude Desktop app** in the **AI** panel (or run
   `python register_claude_desktop.py`). This adds `coyote` to `claude_desktop_config.json` without deleting anything
@@ -267,6 +299,8 @@ If you want to use the API directly (other tools): `GET /status`, `GET /patterns
 | Frequency never changes | `CoyoteFreq` ignores `0` and floats on purpose; send an int between 1 and 100 |
 | Touching the contact does nothing | Read the red/gold line in the *Shock trigger* card and the chip at the top: **NOT READY** usually means the Bluetooth chip is not *Connected*. The Coyote has to be on, close to the PC and not held by another app (the DG-LAB phone app, OpenShock Desktop): while another app holds it, it does not even show up in *Scan*. Then: is *Shock trigger* ticked (it starts off every time)? Is the parameter name right (`ShockOsc/_all` on your avatar)? Does the card say the contact was touched? If it says *not touched since the program started*, VRChat never sent the touch: the contact on the avatar may not accept your hand (for example, "Allow Self" off means only OTHER players can trigger it, and a small radius means the hand has to be close) |
 | The chatbox message does not appear | Is OSC enabled in VRChat? VRChat normally listens for OSC input on port 9000; if your setup changed that (an OSC router, another program holding 9000), put the right port in the card. Try *Test chatbox*. VRChat can also hide chatbox messages (check its settings) |
+| Windows says "protected your PC" / the antivirus complains about the `.exe` | The file is not code-signed. Windows: **More info → Run anyway**. Compare the SHA-256 with `SHA256SUMS.txt` from the release, or build the `.exe` yourself ([how](#building-the-exe-yourself)) |
+| The `.exe` does nothing when I double-click it | Wait a few seconds (it unpacks itself the first time). If nothing shows, open a terminal and run `CoyoteVRChat.exe --selftest` to see what is missing. Is it already open (check the tray/taskbar)? Two copies cannot both hold the OSC port |
 | "tkinter missing" | Reinstall Python with *tcl/tk and IDLE* checked (or use `--headless`) |
 | My configuration got lost | It lives in `%APPDATA%\CoyoteVRChat\settings.json` (if it gets corrupted, the program keeps a `.bak` copy and starts over) |
 
@@ -281,12 +315,31 @@ simulated Coyote, OSC, the API, the MCP server and the interface logic. **What t
 Windows Bluetooth and the real look of the window — that can only be checked by opening the program. CI runs the
 tests on Windows with Python 3.10 and 3.12.
 
+### Building the .exe yourself
+
+Double-click `build_exe.bat`, or from a terminal inside the project folder:
+
 ```
-main.py                      entry point (--simulate, --connect, --headless, --settings)
+build_exe.bat
+```
+
+It makes a separate `.venv-build` folder, installs the dependencies and PyInstaller there, and writes
+`dist\CoyoteVRChat.exe` (one file, no console window, with the logo and the Windows version information; about 13 MB).
+The recipe is `coyote_vrchat.spec`. UPX compression is deliberately **off**, because compressed programs are flagged by
+antivirus software much more often. Check the result with `dist\CoyoteVRChat.exe --selftest`.
+
+What the tests do **not** cover: that PyInstaller really produces a working `.exe`. Each release's `.exe` was built and
+opened (window, logo, `--version`, `--selftest`, `--mcp`) before publishing, on Windows 11. The logo is drawn by
+`tools/make_icon.py` (needs Pillow: `pip install pillow`), which rewrites `assets/coyote.ico` and `assets/coyote.png`.
+
+```
+main.py                      entry point (--simulate, --connect, --headless, --settings, --selftest, --mcp, --version)
 coyote_mcp.py                MCP server for Claude Code / Claude Desktop
 register_claude_desktop.py   registers the MCP in the Claude Desktop app
 mcp_sequence_check.py        tests the MCP with a sequence of intensities
 run.bat                      installs and opens (Windows)
+build_exe.bat                builds dist\CoyoteVRChat.exe (PyInstaller, recipe in coyote_vrchat.spec)
+assets/                      the logo (coyote.ico, coyote.png); tools/make_icon.py draws it
 tools/send_test_osc.py       sends fake VRChat OSC parameters to the program
 docs/AVATAR_SETUP.md         adding the parameters and a menu to a VRChat avatar
 unity/                       Unity package: a hand-held control panel for your avatar (Modular Avatar), with its guide
@@ -301,6 +354,8 @@ coyote_vrc/
   engine.py                  wires everything together
   gui.py                     the window
   mcp_register.py            registers the MCP in the Claude Desktop app
+  resources.py               where the bundled logo is (next to the source, or inside the .exe)
+  selftest.py                --selftest: checks the installation and Bluetooth
 tests/                       automated tests
 ```
 

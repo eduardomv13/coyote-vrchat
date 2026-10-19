@@ -107,7 +107,25 @@ class Settings:
         return self
 
 
+def _import_store_python_settings(target: Path) -> None:
+    """The Microsoft-Store Python keeps %APPDATA% in a private folder, so a copy of the program started from it has its
+    settings (ceiling, rise limit, API token...) somewhere the packaged .exe cannot see. Copy them once, so that
+    switching to the .exe does not silently put the safety limits back to their defaults."""
+    base = os.environ.get("LOCALAPPDATA")
+    if not base:
+        return
+    try:
+        found = sorted(Path(base).glob("Packages/PythonSoftwareFoundation.Python.*/LocalCache/Roaming/CoyoteVRChat/settings.json"))
+        if found and found[0].is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(found[0].read_bytes())
+    except OSError:
+        pass
+
+
 def load_settings(path: Optional[Path] = None) -> Settings:
+    if path is None and not default_settings_path().exists():
+        _import_store_python_settings(default_settings_path())
     path = Path(path) if path else default_settings_path()
     settings = Settings()
     if path.exists():

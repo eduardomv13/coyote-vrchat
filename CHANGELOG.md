@@ -4,6 +4,25 @@ Every version has a number and its own [GitHub release](https://github.com/eduar
 `vMAJOR.MINOR.PATCH`). Old releases are never removed or replaced: a new version is a new release. The in-game panel for
 Unity (`unity/`) has its own version number, listed in [its changelog](unity/io.github.eduardomv13.coyote-panel/CHANGELOG.md).
 
+## 1.2.0 (2026-10-19)
+
+- **A Windows program in one file**: `CoyoteVRChat-1.2.0.exe` runs with a double-click, no Python needed. It opens only the
+  window (no console), shows the logo in the title bar, the taskbar and the file icon, and carries Windows version
+  information. About 13 MB. Built with PyInstaller (`build_exe.bat`, recipe in `coyote_vrchat.spec`; UPX is off on purpose).
+- The file is **not code-signed**, so Windows SmartScreen asks for *More info → Run anyway* and some antivirus programs may
+  complain. The release lists the file's SHA-256 (`SHA256SUMS.txt`).
+- **Temporary logo**: an original black-and-gold wolf's head drawn by `tools/make_icon.py` (not DG-LAB's artwork). Replace
+  `assets/coyote.ico` and `assets/coyote.png` to change it.
+- New options, for the `.exe` and for `python main.py`: `--selftest` (checks the logo, the window library, Windows Bluetooth
+  and the two ports, then exits; non-zero if something the program needs is missing), `--version`, and `--mcp` (the MCP
+  server for an AI). With the `.exe`, the command for Claude is `"<folder>\CoyoteVRChat.exe" --mcp` — the same file is the
+  window and the MCP server — and the **Copy MCP command** / **Register in the Claude Desktop app** buttons produce it.
+- The first time the `.exe` starts without settings of its own, it copies the settings of a copy that was run from the
+  Microsoft-Store Python (Windows keeps those in a private folder the `.exe` cannot see), so the ceilings and the API token do
+  not silently go back to the defaults.
+- The taskbar groups the program under its own identity and logo instead of under Python.
+- 255 automated tests (it was 237).
+
 ## 1.1.0 (2026-10-19)
 
 - **Shock trigger** (new, off by default and at every start): when someone touches the avatar's `ShockOsc/_all` contact, the

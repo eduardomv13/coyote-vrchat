@@ -47,6 +47,14 @@ def server_entry(python: str, script: str) -> dict:
     return {"command": str(python), "args": [str(script)]}
 
 
+def mcp_launcher(script: Optional[str] = None) -> tuple:
+    """(command, args) that Claude has to run for the MCP server: `python coyote_mcp.py` from source, or the packaged
+    CoyoteVRChat.exe itself with --mcp."""
+    if getattr(sys, "frozen", False):
+        return str(Path(sys.executable)), ["--mcp"]
+    return python_for_mcp(), [str(script)]
+
+
 def candidate_paths(environ=None) -> list:
     """Where Claude Desktop usually keeps its config on Windows (regular installer and Store version)."""
     env = os.environ if environ is None else environ
@@ -106,9 +114,10 @@ def register_one(path: Path, entry: dict) -> Result:
         return Result(path, "error", error=f"{exc.strerror or exc}")
 
 
-def register_desktop(python: str, script: str, paths: Optional[Iterable] = None) -> list:
-    """Registers in the config files that exist (or creates the default one if none exists)."""
-    entry = server_entry(python, script)
+def register_desktop(python: str, script: str, paths: Optional[Iterable] = None, args: Optional[list] = None) -> list:
+    """Registers in the config files that exist (or creates the default one if none exists).
+    `args` replaces [script] when the command takes other arguments (the packaged .exe takes --mcp)."""
+    entry = server_entry(python, script) if args is None else {"command": str(python), "args": [str(a) for a in args]}
     if paths is not None:
         targets = [Path(p) for p in paths]
     else:
