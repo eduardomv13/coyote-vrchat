@@ -199,6 +199,11 @@ class BuildRecipe(unittest.TestCase):
         self.assertIn("PyInstaller", bat)
         self.assertIn(".venv-build/", (ROOT / ".gitignore").read_text(encoding="utf-8"))
 
+    def test_the_built_exe_is_copied_next_to_main_and_never_committed(self):
+        bat = (ROOT / "build_exe.bat").read_text(encoding="utf-8")
+        self.assertRegex(bat, r'copy /Y "dist\\CoyoteVRChat\.exe" "CoyoteVRChat\.exe"')
+        self.assertIn("/CoyoteVRChat.exe", (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines())
+
 
 if __name__ == "__main__":
     unittest.main()

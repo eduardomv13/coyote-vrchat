@@ -22,12 +22,18 @@ echo Building...
 ".venv-build\Scripts\python.exe" -m PyInstaller coyote_vrchat.spec --noconfirm --clean
 if errorlevel 1 goto failed
 
+rem PyInstaller writes into dist\; also put the file next to main.py, where it is easy to find and double-click.
+copy /Y "dist\CoyoteVRChat.exe" "CoyoteVRChat.exe" >nul
+if errorlevel 1 goto failed
+
 echo.
-echo Done: dist\CoyoteVRChat.exe
+echo Done: CoyoteVRChat.exe ^(a copy is in dist\^)
 exit /b 0
 
 :failed
 echo.
-echo The build failed ^(see the message above^). You need Python 3.10 or newer: https://www.python.org/downloads/
+echo The build failed ^(see the message above^).
+echo - If CoyoteVRChat.exe is open, close it ^(all its windows^) and run this again: Windows will not let it be replaced.
+echo - You need Python 3.10 or newer: https://www.python.org/downloads/
 pause
 exit /b 1

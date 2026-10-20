@@ -20,3 +20,4 @@ settings.json
 
 # Build output
 .venv-build/
+/CoyoteVRChat.exe

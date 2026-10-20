@@ -326,9 +326,10 @@ build_exe.bat
 ```
 
 It makes a separate `.venv-build` folder, installs the dependencies and PyInstaller there, and writes
-`dist\CoyoteVRChat.exe` (one file, no console window, with the logo and the Windows version information; about 13 MB).
-The recipe is `coyote_vrchat.spec`. UPX compression is deliberately **off**, because compressed programs are flagged by
-antivirus software much more often. Check the result with `dist\CoyoteVRChat.exe --selftest`.
+`dist\CoyoteVRChat.exe` (one file, no console window, with the logo and the Windows version information; about 13 MB),
+then copies it next to `main.py` as `CoyoteVRChat.exe`, so it is in the first folder and easy to double-click (that copy is
+not committed). The recipe is `coyote_vrchat.spec`. UPX compression is deliberately **off**, because compressed programs are
+flagged by antivirus software much more often. Check the result with `CoyoteVRChat.exe --selftest`.
 
 **Where the files on the Releases page come from.** They are not built on a personal computer: publishing a release
 triggers `.github/workflows/release-exe.yml`, which builds the `.exe` on a clean GitHub Windows machine from the tagged
@@ -347,7 +348,7 @@ coyote_mcp.py                MCP server for Claude Code / Claude Desktop
 register_claude_desktop.py   registers the MCP in the Claude Desktop app
 mcp_sequence_check.py        tests the MCP with a sequence of intensities
 run.bat                      installs and opens (Windows)
-build_exe.bat                builds dist\CoyoteVRChat.exe (PyInstaller, recipe in coyote_vrchat.spec)
+build_exe.bat                builds CoyoteVRChat.exe (PyInstaller, recipe in coyote_vrchat.spec; also left in dist\)
 assets/                      the logo (coyote.ico, coyote.png); tools/make_icon.py draws it
 tools/send_test_osc.py       sends fake VRChat OSC parameters to the program
 docs/AVATAR_SETUP.md         adding the parameters and a menu to a VRChat avatar
