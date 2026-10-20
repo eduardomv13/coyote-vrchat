@@ -56,7 +56,7 @@ an intensity ceiling, a latched emergency stop, and an optional watchdog. Detail
 - An optional **in-game control panel for your avatar** (sliders, buttons, frequency; a Unity package that installs with
   Modular Avatar). It is a separate piece: see [unity/README.md](unity/README.md).
 - **One file to run**: `CoyoteVRChat.exe` (no Python needed), with its own logo. See [Install](#1-install).
-- 257 automated tests (protocol, Bluetooth with a simulated Coyote, OSC, API, MCP, interface logic, the shock trigger,
+- 261 automated tests (protocol, Bluetooth with a simulated Coyote, OSC, API, MCP, interface logic, the shock trigger,
   the packaging, and checks on the Unity package that do not need Unity).
 
 **Tested on:** Windows 11, a real Coyote 3.0, and VRChat on PC. The automated tests use a simulated Coyote. Other
@@ -179,8 +179,8 @@ card in the window.
 - **Random power:** a lowest and a highest slider (1 to 100 %). Every touch draws a new whole-number percentage between
   them. The percentage is of the *intensity ceiling*, the same scale as `CoyoteA`: with the default ceiling of 200, 30 % is 60.
 - **Duration:** 1 to 30 seconds. **Channels:** A, B or both.
-- **Chatbox:** when a shock starts, the program sends `Shock 37%` (the text is editable; `{percent}` and `{seconds}` are
-  replaced) to VRChat's OSC input, which listens on port **9000** (OSC has to be enabled in VRChat; the port is a field in the
+- **Chatbox:** when a shock starts, the program sends `Shock 37% for 5 s`: the power drawn and how long it lasts (the text is
+  editable; `{percent}` and `{seconds}` are replaced, and the default is `Shock {percent}% for {seconds} s`) to VRChat's OSC input, which listens on port **9000** (OSC has to be enabled in VRChat; the port is a field in the
   card). VRChat drops chatbox messages that come in too fast, so at most one is sent every 1.6 s. **Test chatbox** sends a
   test message without any shock.
 - **The message goes away by itself** 3 seconds later (a field in the card; 0 = leave it to VRChat). It is also removed at

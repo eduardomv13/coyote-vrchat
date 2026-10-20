@@ -663,7 +663,7 @@ class GuiSmoke(unittest.TestCase):
             self.engine.settings.chatbox_port = vrc.getsockname()[1]
             card._test_chatbox()
             data, _ = vrc.recvfrom(4096)
-            self.assertEqual(oscmod.parse_message(data)[1][0], "Shock 20% (test)")   # the default range is 10..30
+            self.assertEqual(oscmod.parse_message(data)[1][0], "Shock 20% for 3 s (test)")   # the default range is 10..30
             self.assertIn("Test message sent", self.app.msg.cget("text"))
             card._test_shock()
             self.assertIn("No shock: the trigger is off", self.app.msg.cget("text"))
@@ -676,7 +676,7 @@ class GuiSmoke(unittest.TestCase):
             self.assertIn("Test shock:", self.app.msg.cget("text"))
             self.assertTrue(self.engine.control.shock_active())
             data, _ = vrc.recvfrom(4096)
-            self.assertRegex(oscmod.parse_message(data)[1][0], r"^Shock \d+%$")
+            self.assertRegex(oscmod.parse_message(data)[1][0], r"^Shock \d+% for 3 s$")
         finally:
             vrc.close()
 

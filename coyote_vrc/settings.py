@@ -58,7 +58,7 @@ class Settings:
     chatbox_enabled: bool = True      # say the power in the VRChat chatbox when a shock starts
     chatbox_host: str = "127.0.0.1"
     chatbox_port: int = 9000          # VRChat listens for OSC input here (its output goes to 9001)
-    chatbox_text: str = "Shock {percent}%"   # {percent} and {seconds} are replaced
+    chatbox_text: str = "Shock {percent}% for {seconds} s"   # {percent} and {seconds} are replaced
     chatbox_clear_s: int = 3          # remove the message from the chatbox after this many seconds (0 = leave it to VRChat)
     # --- AI
     ai_enabled: bool = False          # NOT persisted: always starts off
@@ -123,6 +123,11 @@ def _import_store_python_settings(target: Path) -> None:
         pass
 
 
+# Before 1.2.1 the default message only said the power. A settings file that still holds exactly that text was not edited
+# on purpose (the program saves every field), so it takes the new default, which also says how long the shock lasts.
+_OLD_DEFAULT_CHATBOX_TEXTS = ("Shock {percent}%",)
+
+
 def load_settings(path: Optional[Path] = None) -> Settings:
     if path is None and not default_settings_path().exists():
         _import_store_python_settings(default_settings_path())
@@ -134,6 +139,8 @@ def load_settings(path: Optional[Path] = None) -> Settings:
             known = {f.name for f in fields(Settings)}
             for key, value in raw.items():
                 if key in known:
+                    if key == "chatbox_text" and value in _OLD_DEFAULT_CHATBOX_TEXTS:
+                        continue
                     setattr(settings, key, value)
         except (OSError, ValueError):
             try:  # corrupted file: keep a copy and start over from the defaults

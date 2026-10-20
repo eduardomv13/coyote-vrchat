@@ -124,7 +124,7 @@ class TouchTests(ShockCase):
         self.tap()
         self.assertTrue(self.ctl.shock_active())
         self.assertEqual(self.out(), (80.0, 80.0))                 # 40% of the 200 ceiling
-        self.assertEqual(self.chat(), ("/chatbox/input", ["Shock 40%", True, False]))
+        self.assertEqual(self.chat(), ("/chatbox/input", ["Shock 40% for 5 s", True, False]))
         self.assertIsNone(self.chat())                             # one message, not two
 
     def test_the_shock_lasts_the_configured_seconds_then_the_channels_fall_back(self):
@@ -214,7 +214,7 @@ class RefusalTests(ShockCase):
         self.engine.emergency_stop("gui")
         self.assertEqual(self.out(), (0.0, 0.0))
         self.assertFalse(self.ctl.shock_active())
-        self.assertEqual(self.chat()[1][0], "Shock 40%")           # the announcement of the first shock...
+        self.assertEqual(self.chat()[1][0], "Shock 40% for 5 s")           # the announcement of the first shock...
         self.assertEqual(self.chat(), ("/chatbox/input", ["", True, False]))   # ...and STOP takes it off the screen
         self.clock.advance(60)
         self.tap()
@@ -328,6 +328,10 @@ class ChatboxTests(ShockCase):
         self.assertEqual(len(render_text("x" * 500, 1, 1)), 144)
         self.assertEqual(render_text("a\n\n b\t c", 1, 1), "a b c")
 
+    def test_the_default_message_says_the_power_and_how_long(self):
+        self.assertEqual(render_text(Settings().chatbox_text, 37, 12), "Shock 37% for 12 s")
+        self.assertEqual(render_text(Settings().chatbox_text, 100, 30), "Shock 100% for 30 s")
+
     def test_custom_text_is_sent(self):
         self.engine.configure_shock(chatbox_text="Zapped at {percent}% for {seconds}s")
         self.tap()
@@ -359,7 +363,7 @@ class ChatboxTests(ShockCase):
 
     def test_the_test_button_message_says_it_is_a_test(self):
         self.assertTrue(self.engine.test_chatbox())
-        self.assertEqual(self.chat(), ("/chatbox/input", ["Shock 40% (test)", True, False]))
+        self.assertEqual(self.chat(), ("/chatbox/input", ["Shock 40% for 5 s (test)", True, False]))
         self.assertFalse(self.ctl.shock_active())                  # a chatbox test never shocks
         self.assertEqual([h.delay for h in self.sched.pending()], [3])      # and it is cleared like a real message
 
@@ -378,7 +382,7 @@ class SettingsTests(ShockCase):
         self.assertEqual((d.osc_param_shock, d.shock_enabled, d.shock_min_pct, d.shock_max_pct, d.shock_seconds),
                          ("ShockOsc/_all", False, 10, 30, 3))
         self.assertEqual((d.shock_channels, d.chatbox_enabled, d.chatbox_port, d.chatbox_text),
-                         ("AB", True, 9000, "Shock {percent}%"))
+                         ("AB", True, 9000, "Shock {percent}% for {seconds} s"))
         self.assertFalse(hasattr(d, "shock_cooldown_s"))           # the pause between shocks does not exist
         self.assertEqual(d.chatbox_clear_s, 3)
 
@@ -407,6 +411,16 @@ class SettingsTests(ShockCase):
             self.engine.configure_shock(shock_enabled=True)       # not changeable this way, on purpose
         with self.assertRaises(ControlError):
             self.engine.configure_shock(nonsense=1)
+
+    def test_a_saved_copy_of_the_old_default_message_takes_the_new_default(self):
+        # before 1.2.1 the default said only the power, and every save wrote it into the settings file
+        self.path.write_text(json.dumps({"chatbox_text": "Shock {percent}%", "api_token": "t"}), encoding="utf-8")
+        self.assertEqual(load_settings(self.path).chatbox_text, "Shock {percent}% for {seconds} s")
+
+    def test_a_message_the_user_wrote_is_kept(self):
+        for mine in ("Zap {percent}", "Shock {percent}% !", "", "{percent}% / {seconds} s"):
+            self.path.write_text(json.dumps({"chatbox_text": mine, "api_token": "t"}), encoding="utf-8")
+            self.assertEqual(load_settings(self.path).chatbox_text, mine)
 
     def test_an_old_settings_file_with_the_removed_pause_still_loads(self):
         self.path.write_text(json.dumps({"shock_cooldown_s": 30, "shock_min_pct": 15, "api_token": "t"}), encoding="utf-8")
@@ -475,7 +489,7 @@ class ChatboxClearTests(ShockCase):
 
     def test_the_message_is_cleared_after_the_configured_seconds(self):
         self.tap()
-        self.assertEqual(self.chat()[1][0], "Shock 40%")
+        self.assertEqual(self.chat()[1][0], "Shock 40% for 5 s")
         pending = self.sched.pending()
         self.assertEqual([h.delay for h in pending], [3])
         self.assertIsNone(self.chat())                             # nothing is removed before the time is up
@@ -625,7 +639,7 @@ class OverTheWire(unittest.TestCase):
             sender.sendto(osc.encode_message(CONTACT, False), ("127.0.0.1", engine.osc.port))
             sender.sendto(osc.encode_message(CONTACT, True), ("127.0.0.1", engine.osc.port))
             data, _ = vrc_in.recvfrom(4096)
-            self.assertEqual(osc.parse_message(data), ("/chatbox/input", ["Shock 25%", True, False]))
+            self.assertEqual(osc.parse_message(data), ("/chatbox/input", ["Shock 25% for 1 s", True, False]))
             self.assertTrue(engine.control.shock_active())
             end = time.time() + 3
             while engine.control.shock_active() and time.time() < end:

@@ -4,6 +4,16 @@ Every version has a number and its own [GitHub release](https://github.com/eduar
 `vMAJOR.MINOR.PATCH`). Old releases are never removed or replaced: a new version is a new release. The in-game panel for
 Unity (`unity/`) has its own version number, listed in [its changelog](unity/io.github.eduardomv13.coyote-panel/CHANGELOG.md).
 
+## 1.2.1 (2026-10-20)
+
+- **The VRChat chatbox now shows the power and the duration of the shock**: the default message is
+  `Shock {percent}% for {seconds} s`, for example `Shock 37% for 5 s` (it used to say only the power). The text is still
+  editable in the *Shock trigger* card. A settings file that still holds the old default (`Shock {percent}%`) takes the new
+  one the next time the program starts; a text you wrote yourself is never touched.
+- `build_exe.bat` also leaves `CoyoteVRChat.exe` next to `main.py` (a copy of `dist\CoyoteVRChat.exe`, not committed), and
+  explains what to do when the build cannot replace an `.exe` that is open.
+- 261 automated tests (it was 257).
+
 ## 1.2.0 (2026-10-19)
 
 - **A Windows program in one file**: `CoyoteVRChat-1.2.0.exe` runs with a double-click, no Python needed. It opens only the
