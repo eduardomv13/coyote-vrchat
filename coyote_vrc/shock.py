@@ -11,7 +11,9 @@ Safety (the device delivers shocks, and here OTHER PLAYERS pull the trigger):
   * one shock per touch: a contact that stays on does not repeat, and a touch while a shock is running is ignored;
   * the power is a percentage of the intensity ceiling, and the controller applies the ceiling, the rise limit and the
     latched emergency stop exactly as for every other source (see control.py: a shock is only a temporary MINIMUM level);
-  * nothing happens, and nothing is announced, unless the Coyote is connected and the emergency stop is not active.
+  * a shock is only ever delivered with the Coyote connected and the emergency stop not active. With the Coyote NOT
+    connected a touch still puts the message in the chatbox (the user asked for that), but nothing is delivered and the
+    window says so; with the emergency stop active nothing happens and nothing is announced.
 
 About clearing the chatbox: VRChat's documentation says nothing about removing a message through OSC. What chatbox tools do
 is send an EMPTY message (with the "send now" flag), and that is what is done here. It is not guaranteed: if VRChat ignores
@@ -64,6 +66,9 @@ class ShockTrigger:
         self._last_touch: Optional[float] = None      # when the contact last turned on (whatever happened next)
         self._ignored: Optional[tuple] = None         # (time, reason) of the last touch that did not fire
         self._ignored_n = 0
+        self._announced: Optional[tuple] = None       # (time, "37% for 5 s") of the last touch that was only announced
+        self._announced_n = 0
+        self._virtual_until = 0.0                     # an announced-only "shock" counts as running until then
         self.last = ""   # description of the last shock (shown in the window)
 
     # ------------------------------------------------------------------ from VRChat
@@ -94,7 +99,7 @@ class ShockTrigger:
         if ctl.estopped:
             return refuse("the emergency stop is active")
         if not self._is_connected():
-            return refuse("the Coyote is not connected")
+            return self._announce_only(refuse)
         if ctl.shock_active():
             return refuse("a shock is already running")
         cap = ctl.cap("gui")
@@ -114,13 +119,39 @@ class ShockTrigger:
                 "channels": res["channels"]}
 
     # ------------------------------------------------------------------ chatbox
-    def _announce(self, percent: int, seconds: int) -> None:
+    def _announce_only(self, refuse) -> dict:
+        """The Coyote is not connected, so nothing can be delivered. The message is shown in the chatbox anyway, as if the shock
+        had happened, and the touch counts as a running shock for `shock_seconds` (so a second touch is not announced on top)."""
+        s = self.settings
+        now = self._clock()
+        with self._lock:
+            busy = now < self._virtual_until
+        if busy:
+            return refuse("the Coyote is not connected, and the message of the previous touch is still running")
+        percent = self._rng.randint(s.shock_min_pct, s.shock_max_pct)
+        seconds = int(s.shock_seconds)
+        if not self._announce(percent, seconds):
+            return refuse("the Coyote is not connected, and no chatbox message was sent "
+                          "(the message is off or empty, or came too soon after another)")
+        with self._lock:
+            self._virtual_until = now + seconds
+            self._announced = (now, f"{percent}% for {seconds} s")
+            self._announced_n += 1
+        self.last = f"{percent}% for {seconds} s: shown in the chatbox only, the Coyote is not connected"
+        self.control.log(f"Shock trigger: the Coyote is not connected, so {percent}% for {seconds} s was only announced "
+                         "in the chatbox; no shock was delivered")
+        return {"fired": False, "announced": True, "percent": percent, "seconds": float(seconds),
+                "channels": s.shock_channels,
+                "reason": "the Coyote is not connected: the message was shown in the chatbox, no shock was delivered"}
+
+    def _announce(self, percent: int, seconds: int) -> bool:
+        """Puts the message in the chatbox. True when a message really went out."""
         s = self.settings
         if not s.chatbox_enabled:
-            return
+            return False
         text = render_text(s.chatbox_text, percent, seconds)
         if not text:
-            return
+            return False
         with self._lock:
             if self._clock() - self._last_send < CHATBOX_MIN_INTERVAL_S:
                 too_fast = True
@@ -128,8 +159,8 @@ class ShockTrigger:
                 too_fast = False
         if too_fast:
             self.control.log("Chatbox: message skipped (VRChat drops messages that come too fast)")
-            return
-        self.show(text)
+            return False
+        return self.show(text)
 
     def show(self, text: str) -> bool:
         """Puts a message in the chatbox and arranges for it to be removed after `chatbox_clear_s` seconds."""
@@ -193,6 +224,7 @@ class ShockTrigger:
             self._cancel_clear_locked()
             self._chat_gen += 1
             self._chat_visible = False
+            self._virtual_until = 0.0
         if visible:
             self._send_empty()
 
@@ -203,11 +235,15 @@ class ShockTrigger:
         with self._lock:
             touch_age = None if self._last_touch is None else round(now - self._last_touch, 1)
             ignored, ignored_n = self._ignored, self._ignored_n
+            announced, announced_n = self._announced, self._announced_n
         return {
             "touch_age_s": touch_age,                      # None = the contact has not been touched since the program started
             "ignored_reason": ignored[1] if ignored else "",
             "ignored_age_s": None if ignored is None else round(now - ignored[0], 1),
             "ignored_count": ignored_n,
+            "announced_text": announced[1] if announced else "",     # a touch shown in the chatbox without a shock
+            "announced_age_s": None if announced is None else round(now - announced[0], 1),
+            "announced_count": announced_n,
             "enabled": self.settings.shock_enabled,
             "active": snap["active"],
             "remaining_s": snap["remaining_s"],

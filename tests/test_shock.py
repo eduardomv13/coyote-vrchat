@@ -225,12 +225,91 @@ class RefusalTests(ShockCase):
         self.tap()
         self.assertTrue(self.ctl.shock_active())
 
-    def test_not_connected_does_nothing_and_says_nothing(self):
+    def test_not_connected_shows_the_message_but_delivers_no_shock(self):
         self.engine.link.state = "disconnected"
         self.tap()
         self.assertFalse(self.ctl.shock_active())
+        self.assertEqual(self.out(), (0.0, 0.0))                   # nothing is delivered, not even later
+        self.assertEqual(self.chat(), ("/chatbox/input", ["Shock 40% for 5 s", True, False]))
+        self.assertIsNone(self.chat())                             # one message, not two
+        self.assertTrue(self.logged("only announced"))
+        self.assertIn("chatbox only", self.engine.shock.last)
+
+    def test_the_announced_message_is_cleared_like_a_real_one(self):
+        self.engine.link.state = "disconnected"
+        self.tap()
+        self.chat()
+        self.assertEqual([h.delay for h in self.sched.pending()], [3])
+        self.sched.pending()[0].fire()
+        self.assertEqual(self.chat(), ("/chatbox/input", ["", True, False]))
+
+    def test_the_test_shock_button_does_the_same_without_a_coyote(self):
+        self.engine.link.state = "disconnected"
+        res = self.engine.test_shock()
+        self.assertEqual((res["fired"], res["announced"], res["percent"], res["seconds"]), (False, True, 40, 5.0))
+        self.assertIn("no shock was delivered", res["reason"])
+        self.assertEqual(self.chat()[1][0], "Shock 40% for 5 s")
+        self.assertFalse(self.ctl.shock_active())
+
+    def test_an_announced_touch_counts_as_running_for_the_shock_duration(self):
+        self.engine.link.state = "disconnected"
+        self.tap()
+        self.assertIsNotNone(self.chat())
+        self.clock.advance(4.9)                                    # the 5 s are not over: this touch is not announced
+        self.tap()
         self.assertIsNone(self.chat())
-        self.assertTrue(self.logged("the Coyote is not connected"))
+        self.assertTrue(self.logged("the message of the previous touch is still running"))
+        self.clock.advance(0.2)                                    # over now (and VRChat's 1.6 s rule is long past)
+        self.tap()
+        self.assertEqual(self.chat()[1][0], "Shock 40% for 5 s")
+        self.assertEqual(self.engine.shock_status()["announced_count"], 2)
+
+    def test_not_connected_and_the_chatbox_off_means_the_touch_is_ignored(self):
+        self.engine.link.state = "disconnected"
+        self.engine.configure_shock(chatbox_enabled=False)
+        self.tap()
+        self.assertIsNone(self.chat())
+        st = self.engine.shock_status()
+        self.assertEqual((st["announced_count"], st["ignored_count"]), (0, 1))
+        self.assertIn("no chatbox message was sent", st["ignored_reason"])
+        self.engine.configure_shock(chatbox_enabled=True, chatbox_text="")
+        self.tap()
+        self.assertIsNone(self.chat())                             # an empty message is not sent either
+
+    def test_not_connected_with_the_emergency_stop_does_nothing_and_says_nothing(self):
+        self.engine.link.state = "disconnected"
+        self.engine.emergency_stop("gui")
+        self.clock.advance(60)
+        self.tap()
+        self.assertIsNone(self.chat())
+        self.assertEqual(self.engine.shock_status()["announced_count"], 0)
+        self.assertTrue(self.logged("the emergency stop is active"))
+
+    def test_a_message_that_comes_too_soon_after_another_is_not_sent_and_not_counted(self):
+        self.engine.link.state = "disconnected"
+        self.engine.configure_shock(shock_seconds=1)
+        self.tap()
+        self.assertIsNotNone(self.chat())
+        self.clock.advance(1.1)                                    # the "shock" is over but VRChat would drop a message now
+        self.assertLess(1.1, CHATBOX_MIN_INTERVAL_S)
+        self.tap()
+        self.assertIsNone(self.chat())
+        self.assertEqual(self.engine.shock_status()["announced_count"], 1)
+        self.assertIn("no chatbox message was sent", self.engine.shock_status()["ignored_reason"])
+
+    def test_nothing_is_delivered_when_the_coyote_connects_while_the_message_is_showing(self):
+        self.engine.link.state = "disconnected"
+        self.tap()
+        self.engine.link.state = "connected"
+        self.assertEqual(self.out(), (0.0, 0.0))
+        self.assertFalse(self.ctl.shock_active())
+
+    def test_switching_the_trigger_off_takes_an_announced_message_off_the_screen(self):
+        self.engine.link.state = "disconnected"
+        self.tap()
+        self.assertIsNotNone(self.chat())
+        self.engine.set_shock_enabled(False)
+        self.assertEqual(self.chat(), ("/chatbox/input", ["", True, False]))
 
     def test_reconnecting_clears_a_running_shock(self):
         self.tap()
@@ -457,13 +536,24 @@ class SettingsTests(ShockCase):
         st = self.engine.shock_status()
         self.assertEqual((st["touch_age_s"], st["ignored_age_s"], st["ignored_count"], st["ignored_reason"]),
                          (None, None, 0, ""))
-        self.engine.link.state = "disconnected"
+        self.engine.emergency_stop("gui")
         self.clock.advance(5)
-        self.tap()                                                 # a touch that cannot fire
+        self.tap()                                                 # a touch that cannot do anything
         self.clock.advance(7)
         st = self.engine.shock_status()
         self.assertEqual((st["touch_age_s"], st["ignored_age_s"], st["ignored_count"]), (7.0, 7.0, 1))
-        self.assertEqual(st["ignored_reason"], "the Coyote is not connected")
+        self.assertEqual(st["ignored_reason"], "the emergency stop is active")
+        self.assertEqual((st["announced_age_s"], st["announced_count"], st["announced_text"]), (None, 0, ""))
+
+    def test_status_reports_a_touch_that_was_only_announced(self):
+        self.engine.link.state = "disconnected"
+        self.clock.advance(5)
+        self.tap()
+        self.clock.advance(7)
+        st = self.engine.shock_status()
+        self.assertEqual((st["touch_age_s"], st["announced_age_s"], st["announced_count"]), (7.0, 7.0, 1))
+        self.assertEqual(st["announced_text"], "40% for 5 s")
+        self.assertEqual((st["ignored_count"], st["ignored_reason"]), (0, ""))   # it was not ignored: it reached the chatbox
         self.assertFalse(st["connected"])
 
     def test_enabling_the_trigger_connects_the_coyote_if_nothing_is_connected(self):

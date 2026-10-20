@@ -56,7 +56,7 @@ an intensity ceiling, a latched emergency stop, and an optional watchdog. Detail
 - An optional **in-game control panel for your avatar** (sliders, buttons, frequency; a Unity package that installs with
   Modular Avatar). It is a separate piece: see [unity/README.md](unity/README.md).
 - **One file to run**: `CoyoteVRChat.exe` (no Python needed), with its own logo. See [Install](#1-install).
-- 261 automated tests (protocol, Bluetooth with a simulated Coyote, OSC, API, MCP, interface logic, the shock trigger,
+- 271 automated tests (protocol, Bluetooth with a simulated Coyote, OSC, API, MCP, interface logic, the shock trigger,
   the packaging, and checks on the Unity package that do not need Unity).
 
 **Tested on:** Windows 11, a real Coyote 3.0, and VRChat on PC. The automated tests use a simulated Coyote. Other
@@ -190,11 +190,18 @@ card in the window.
   display duration" setting.
 - **One shock per touch.** A contact that stays on does not repeat: it has to turn off and on again. A touch while a shock is
   running is ignored. There is no pause after a shock: as soon as it ends, the next touch can fire a new one.
-- **It never fires** unless the trigger is ticked, the Coyote is connected and the emergency stop is not active, and nothing is
-  announced for a shock that did not happen. Ticking the trigger also tries to connect the Coyote if it is not connected.
-  While it cannot fire, the chip at the top says **Shock trigger: NOT READY** in red and the card says why. A touch that is
-  ignored is shown in red at the bottom of the window and in the card (with the reason and how long ago), and the card also
-  shows when the contact was last touched, so you can tell "VRChat never sent the touch" from "the program ignored it".
+- **A shock is only delivered** when the trigger is ticked, the Coyote is connected and the emergency stop is not active.
+  With the emergency stop active a touch does nothing and nothing is announced (the chip says **Shock trigger: NOT READY** in
+  red). Ticking the trigger also tries to connect the Coyote if it is not connected.
+- **With the Coyote not connected, a touch still shows the message in the chatbox**: the power and the duration are drawn and
+  announced as usual (`Shock 37% for 5 s`) and the message is cleared as usual, but **no shock is delivered**. The chip at the
+  top says **Shock trigger: chatbox only** in gold, and the card and the bottom of the window say that the touch only reached
+  the chatbox. For those seconds the program behaves as if a shock were running, so a second touch is not announced on top
+  of it. If the chatbox message is switched off, empty or would come too soon after another, such a touch is ignored. Keep
+  in mind that the people around you see a message for a shock that was not delivered.
+- **A touch that is ignored** is shown in red at the bottom of the window and in the card (with the reason and how long ago),
+  and the card also shows when the contact was last touched, so you can tell "VRChat never sent the touch" from "the program
+  ignored it".
 - **It is a floor, not a replacement.** During the shock each chosen channel is held at *at least* the drawn power: what the
   window, a panel or the AI ask for is never lowered, and afterwards the channel goes back to it. The ceiling and the rise
   limit still apply (with the default rise limit of 100 per second, a 100 % shock takes 2 s to reach full power; set the limit
@@ -281,8 +288,8 @@ If you want to use the API directly (other tools): `GET /status`, `GET /patterns
 - The emergency stop is **latched**: only the window re-enables it. It works through the button, `Esc`, the VRChat
   `CoyoteStop` parameter and the AI.
 - The shock trigger is off at every start, asks for confirmation when you switch it on, fires one shock per touch (never
-  longer than 30 s), only with the Coyote connected and no emergency stop, and always inside
-  the ceiling and the rise limit.
+  longer than 30 s), delivers a shock only with the Coyote connected and no emergency stop (without a connected Coyote a
+  touch only shows the chatbox message), and always inside the ceiling and the rise limit.
 - The AI API only accepts connections from this same PC, with a token, and refuses web pages (a site open in the
   browser cannot send a shock).
 - The `Esc` key only works with the program window focused. Inside the game, use the `CoyoteStop` parameter (and the
@@ -299,7 +306,7 @@ If you want to use the API directly (other tools): `GET /status`, `GET /patterns
 | OSC "receiving" never shows up | Is OSC enabled in VRChat? Is port 9001 free? Does the avatar have the parameters? After adding parameters, use *Options → OSC → Reset Config* in VRChat and re-select the avatar. See [docs/AVATAR_SETUP.md](docs/AVATAR_SETUP.md) |
 | OSC shows packets but nothing changes | Only parameters named exactly `CoyoteA`/`CoyoteB`/`CoyoteFreq`/`CoyoteStop` count (names can be changed in the OSC panel). `CoyoteFreq` must be an **int** parameter |
 | Frequency never changes | `CoyoteFreq` ignores `0` and floats on purpose; send an int between 1 and 100 |
-| Touching the contact does nothing | Read the red/gold line in the *Shock trigger* card and the chip at the top: **NOT READY** usually means the Bluetooth chip is not *Connected*. The Coyote has to be on, close to the PC and not held by another app (the DG-LAB phone app, OpenShock Desktop): while another app holds it, it does not even show up in *Scan*. Then: is *Shock trigger* ticked (it starts off every time)? Is the parameter name right (`ShockOsc/_all` on your avatar)? Does the card say the contact was touched? If it says *not touched since the program started*, VRChat never sent the touch: the contact on the avatar may not accept your hand (for example, "Allow Self" off means only OTHER players can trigger it, and a small radius means the hand has to be close) |
+| Touching the contact does nothing | Read the red/gold line in the *Shock trigger* card and the chip at the top: **chatbox only** (gold) means the Bluetooth chip is not *Connected*: a touch then shows the message in the chatbox but delivers no shock; **NOT READY** (red) means the emergency stop is active. The Coyote has to be on, close to the PC and not held by another app (the DG-LAB phone app, OpenShock Desktop): while another app holds it, it does not even show up in *Scan*. Then: is *Shock trigger* ticked (it starts off every time)? Is the parameter name right (`ShockOsc/_all` on your avatar)? Does the card say the contact was touched? If it says *not touched since the program started*, VRChat never sent the touch: the contact on the avatar may not accept your hand (for example, "Allow Self" off means only OTHER players can trigger it, and a small radius means the hand has to be close) |
 | The chatbox message does not appear | Is OSC enabled in VRChat? VRChat normally listens for OSC input on port 9000; if your setup changed that (an OSC router, another program holding 9000), put the right port in the card. Try *Test chatbox*. VRChat can also hide chatbox messages (check its settings) |
 | Windows says "protected your PC" / the antivirus complains about the `.exe` | The file is not code-signed. Windows: **More info → Run anyway**. Compare the SHA-256 with `SHA256SUMS.txt` from the release, or build the `.exe` yourself ([how](#building-the-exe-yourself)) |
 | The `.exe` does nothing when I double-click it | Wait a few seconds (it unpacks itself the first time). If nothing shows, open a terminal and run `CoyoteVRChat.exe --selftest` to see what is missing. Is it already open (check the tray/taskbar)? Two copies cannot both hold the OSC port |

@@ -115,9 +115,9 @@ class Engine:
             if self.link.state in ("disconnected",):
                 self.control.log("Shock trigger: the Coyote is not connected, connecting now…")
                 self.connect()
-        else:   # also cancel a shock that is running right now
-            if self.control.stop_shock("trigger switched off"):
-                self.shock.clear_now()
+        else:   # also cancel a shock that is running right now, and take our message off the screen
+            self.control.stop_shock("trigger switched off")
+            self.shock.clear_now()
             self.link.poke()
 
     def configure_shock(self, **kw) -> set:
@@ -144,7 +144,8 @@ class Engine:
         return self.shock.status()
 
     def test_shock(self) -> dict:
-        """The same as a touch on the contact (it obeys every rule: switched on, connected, no shock running, no emergency stop)."""
+        """The same as a touch on the contact (it obeys every rule: switched on, no shock running, no emergency stop; without
+        a connected Coyote it only shows the chatbox message)."""
         return self.shock.fire("gui")
 
     def test_chatbox(self) -> bool:

@@ -537,7 +537,7 @@ class GuiSmoke(unittest.TestCase):
         self.assertIn("connecting", self.app.msg.cget("text"))
         self.assertIn("connect it", fake_mb.asked[1][1])           # and the confirmation said it would
         self.refresh()
-        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: NOT READY")   # not connected yet
+        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: chatbox only")   # not connected yet
         self.engine.link.state = "connected"
         self.refresh()
         self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: armed")
@@ -635,7 +635,7 @@ class GuiSmoke(unittest.TestCase):
         self.assertIn("a touch was ignored", self.app.msg.cget("text"))        # also shown at the bottom of the window
         self.assertEqual(self.app.msg.cget("fg").lower(), gui.RED.lower())
         self.assertIn("last touched", card.lbl_touch.cget("text"))
-        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: NOT READY")
+        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: chatbox only")
         self.engine.link.state = "connected"
         self.refresh()
         self.assertIn("waiting for a touch on ShockOsc/_all", card.lbl_state.cget("text"))
@@ -651,6 +651,36 @@ class GuiSmoke(unittest.TestCase):
         self.engine.emergency_stop("gui")
         self.refresh()
         self.assertIn("emergency stop", card.lbl_state.cget("text"))
+
+    def test_a_touch_without_a_coyote_is_shown_as_chatbox_only(self):
+        from coyote_vrc import osc as oscmod
+        card = self.app.shock
+        self.engine.connect = lambda *a, **k: None      # the real Bluetooth is not under test here
+        vrc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        vrc.bind(("127.0.0.1", 0))
+        vrc.settimeout(2.0)
+        try:
+            self.engine.settings.chatbox_port = vrc.getsockname()[1]
+            self.engine.set_shock_enabled(True)
+            self.refresh()
+            self.assertIn("only shows the chatbox message", card.lbl_state.cget("text"))
+            self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: chatbox only")
+            self.assertEqual(self.app.chip_shock.dot.cget("fg").lower(), gui.GOLD.lower())   # not the red of NOT READY
+            self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [True])
+            self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [False])
+            data, _ = vrc.recvfrom(4096)
+            self.assertRegex(oscmod.parse_message(data)[1][0], r"^Shock \d+% for 3 s$")
+            self.refresh()
+            self.assertIn("shown in the chatbox", card.lbl_ignored.cget("text"))
+            self.assertIn("no shock", card.lbl_ignored.cget("text"))
+            self.assertNotIn("Ignored", card.lbl_ignored.cget("text"))
+            self.assertEqual(card.lbl_ignored.cget("fg").lower(), gui.GOLD.lower())
+            self.assertIn("chatbox only", self.app.msg.cget("text"))
+            self.assertEqual(self.app.msg.cget("fg").lower(), gui.GOLD.lower())
+            self.assertFalse(self.engine.control.shock_active())
+            self.assertIn("chatbox only", card.lbl_last.cget("text"))
+        finally:
+            vrc.close()
 
     def test_shock_test_buttons(self):
         from coyote_vrc import osc as oscmod
@@ -668,8 +698,13 @@ class GuiSmoke(unittest.TestCase):
             card._test_shock()
             self.assertIn("No shock: the trigger is off", self.app.msg.cget("text"))
             self.engine.set_shock_enabled(True)
+            self.engine.shock._last_send = -1e9    # a real VRChat drops a message that follows within 1.6 s; skip that wait
             card._test_shock()
             self.assertIn("not connected", self.app.msg.cget("text"))
+            self.assertIn("only shown in the chatbox", self.app.msg.cget("text"))     # no Coyote: the message, not a shock
+            self.assertFalse(self.engine.control.shock_active())
+            data, _ = vrc.recvfrom(4096)
+            self.assertRegex(oscmod.parse_message(data)[1][0], r"^Shock \d+% for 3 s$")
             self.engine.link.state = "connected"
             self.engine.shock._last_send = -1e9    # a real VRChat drops a message that follows within 1.6 s; skip that wait
             card._test_shock()

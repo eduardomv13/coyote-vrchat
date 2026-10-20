@@ -4,6 +4,17 @@ Every version has a number and its own [GitHub release](https://github.com/eduar
 `vMAJOR.MINOR.PATCH`). Old releases are never removed or replaced: a new version is a new release. The in-game panel for
 Unity (`unity/`) has its own version number, listed in [its changelog](unity/io.github.eduardomv13.coyote-panel/CHANGELOG.md).
 
+## Unreleased
+
+- **The chatbox message also appears when the Coyote is not connected.** A touch on the contact now shows
+  `Shock 37% for 5 s` in the VRChat chatbox (and clears it as usual) even without a connected Coyote, but **no shock is
+  delivered**. The chip at the top says *Shock trigger: chatbox only* (gold) instead of *NOT READY*, and the card and the
+  bottom of the window say the touch only reached the chatbox. During the announced seconds a second touch is not announced
+  on top of it. If the chatbox message is off, empty or too soon after another, such a touch is still ignored. With the
+  emergency stop active nothing is announced, as before.
+- Switching the trigger off now also takes a message that is still on screen off the chatbox.
+- 271 automated tests (it was 261).
+
 ## 1.2.1 (2026-10-20)
 
 - **The VRChat chatbox now shows the power and the duration of the shock**: the default message is
