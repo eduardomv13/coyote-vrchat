@@ -4,7 +4,7 @@ Every version has a number and its own [GitHub release](https://github.com/eduar
 `vMAJOR.MINOR.PATCH`). Old releases are never removed or replaced: a new version is a new release. The in-game panel for
 Unity (`unity/`) has its own version number, listed in [its changelog](unity/io.github.eduardomv13.coyote-panel/CHANGELOG.md).
 
-## Unreleased
+## 1.3.0 (2026-10-21)
 
 - **A new window with three tabs**, like a settings dialog: *Coyote settings* (Bluetooth connection, Channel A, Channel B,
   Patterns, Safety limits), *Shock contact* (everything about the contact shock) and *Extras* (VRChat OSC, AI / Claude
