@@ -1182,6 +1182,8 @@ class App(tk.Tk):
             chip.pack(side="left")
         tk.Frame(self, bg=GOLD_DIM, height=1).pack(side="top", fill="x", padx=14)
 
+    TAB_PADDING = (22, 8)    # left/right and top/bottom space around a tab's text, selected or not
+
     def _style_tabs(self):
         """The tab bar, in the black and gold theme (ttk draws it; the rest of the window is plain tk)."""
         style = ttk.Style(self)
@@ -1191,12 +1193,15 @@ class App(tk.Tk):
             pass
         style.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(14, 8, 14, 0),
                         bordercolor=GOLD_DIM, lightcolor=BG, darkcolor=BG)
-        style.configure("TNotebook.Tab", background=PANEL, foreground=DIM, padding=(22, 8), borderwidth=0,
+        style.configure("TNotebook.Tab", background=PANEL, foreground=DIM, padding=self.TAB_PADDING, borderwidth=0,
                         font=(FONT, 10, "bold"), bordercolor=BG, lightcolor=PANEL, darkcolor=PANEL)
+        # The "clam" theme gives the selected tab less padding than the others, which made the tab you click SHRINK: the
+        # same padding for the selected one keeps every tab the same size.
         style.map("TNotebook.Tab",
                   background=[("selected", PANEL_HI), ("active", "#1B1B1B")],
                   foreground=[("selected", GOLD), ("active", GOLD_HI)],
-                  lightcolor=[("selected", PANEL_HI)], darkcolor=[("selected", PANEL_HI)])
+                  lightcolor=[("selected", PANEL_HI)], darkcolor=[("selected", PANEL_HI)],
+                  padding=[("selected", self.TAB_PADDING)], expand=[("selected", (0, 0, 0, 0))])
         # no dotted focus rectangle inside the tab
         style.layout("TNotebook.Tab", [("Notebook.tab", {"sticky": "nswe", "children": [
             ("Notebook.padding", {"side": "top", "sticky": "nswe", "children": [
