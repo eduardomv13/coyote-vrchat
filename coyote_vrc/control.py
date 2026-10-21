@@ -7,9 +7,9 @@ Safety rules implemented in this module:
   * LATCHED emergency stop: zeroes everything and ignores new commands until re-enabled from the GUI.
   * On (re)connect, intensities start at zero.
   * Optional watchdog: zeroes OSC-driven channels if VRChat goes silent.
-  * A timed shock (the ShockOSC contact trigger) is only a temporary MINIMUM level for some channels: it never
-    lowers what the window/VRChat/AI ask for, lasts at most 30 s, follows the ceiling and the rise limit, and the
-    emergency stop cancels it.
+  * A timed shock (the contact trigger) is only a temporary MINIMUM level, with its own level and its own end time for
+    each channel: it never lowers what the window/VRChat/AI ask for, lasts at most 30 s, follows the ceiling and the rise
+    limit, and the emergency stop cancels it.
 """
 from __future__ import annotations
 
@@ -112,9 +112,9 @@ class Controller:
         self.last_osc: Optional[float] = None
         self.osc_values: list[Optional[float]] = [None, None]
         self.ai_last_action = ""
-        # Shock overlay: until `shock_until`, channel i never goes below shock_level[i] (see start_shock)
+        # Shock overlay: until `shock_until[i]`, channel i never goes below shock_level[i] (see start_shocks)
         self.shock_level: list[float] = [0.0, 0.0]
-        self.shock_until = 0.0
+        self.shock_until: list[float] = [0.0, 0.0]
         self._log: deque = deque(maxlen=400)
         self._log_n = 0
 
@@ -221,49 +221,76 @@ class Controller:
         }
 
     # ------------------------------------------------------------------ shock (a timed minimum level)
+    def _channel_shocking(self, i: int, now: float) -> bool:
+        return now < self.shock_until[i] and self.shock_level[i] > 0
+
     def _shock_running(self, now: float) -> bool:
-        return now < self.shock_until and any(v > 0 for v in self.shock_level)
+        return any(self._channel_shocking(i, now) for i in (0, 1))
+
+    def _clear_shock_locked(self) -> None:
+        self.shock_level = [0.0, 0.0]
+        self.shock_until = [0.0, 0.0]
 
     def _expire_shock(self, now: float) -> None:
-        """Clears the shock once its time is up (the caller holds the lock)."""
-        if self.shock_until and now >= self.shock_until:
-            self.shock_until = 0.0
-            self.shock_level = [0.0, 0.0]
-            self.log("Shock ended")
+        """Clears the channels whose shock time is up (the caller holds the lock)."""
+        for i in (0, 1):
+            if self.shock_until[i] and now >= self.shock_until[i]:
+                self.shock_until[i] = 0.0
+                self.shock_level[i] = 0.0
+                self.log(f"Shock ended on {'AB'[i]}")
 
-    def shock_active(self) -> bool:
+    def shock_active(self, ch=None) -> bool:
+        """True while a shock runs on any channel, or on one of `ch` ("A", "B", "AB") when it is given."""
+        chans = (0, 1) if ch is None else channels_from(ch)
         with self._lock:
             now = self._clock()
             self._expire_shock(now)
-            return self._shock_running(now)
+            return any(self._channel_shocking(i, now) for i in chans)
 
-    def start_shock(self, ch, level, seconds, source: str = "osc") -> dict:
-        """Starts a timed shock: for `seconds` the channels never go below `level`. It is a MINIMUM, so it never lowers
-        what the window, VRChat or the AI already ask for. The ceiling, the rise limit and the emergency stop apply."""
-        chans = channels_from(ch)
-        v = _number(level, "intensity")
-        secs = _number(seconds, "seconds")
+    def start_shocks(self, plan: dict, source: str = "osc") -> dict:
+        """Starts timed shocks, each channel with its own level and its own duration: `plan` is
+        {"A": (level, seconds), "B": (level, seconds)} (one or both). For its `seconds` a channel never goes below its
+        `level`. It is a MINIMUM, so it never lowers what the window, VRChat or the AI already ask for. The ceiling, the rise
+        limit and the emergency stop apply. All or nothing: it refuses if any of the channels is already shocking."""
+        if not isinstance(plan, dict) or not plan:
+            raise ControlError("no shock requested")
+        wanted = {}
+        for ch, (level, seconds) in plan.items():
+            (i,) = channels_from(ch)
+            wanted[i] = (_number(level, "intensity"), _number(seconds, "seconds"))
         with self._lock:
             if self.estopped:
                 raise ControlForbidden("EMERGENCY STOP active — re-enable it from the GUI")
             now = self._clock()
             self._expire_shock(now)
-            if self._shock_running(now):
-                raise ControlError("a shock is already running")
-            applied = max(0.0, min(float(self.cap("gui")), v))
-            duration = max(0.0, min(float(SHOCK_MAX_SECONDS), secs))
-            self.shock_level = [applied if i in chans else 0.0 for i in (0, 1)]
-            self.shock_until = now + duration
-            self.log(f"SHOCK ({source}): {_names(chans)} at {applied:.0f} for {duration:.0f} s")
-            return {"channels": _names(chans), "applied": applied, "seconds": duration,
-                    "clamped": applied != v or duration != secs}
+            busy = [i for i in wanted if self._channel_shocking(i, now)]
+            if busy:
+                raise ControlError("a shock is already running on " + _names(busy))
+            result, parts = {}, []
+            for i in sorted(wanted):
+                v, secs = wanted[i]
+                applied = max(0.0, min(float(self.cap("gui")), v))
+                duration = max(0.0, min(float(SHOCK_MAX_SECONDS), secs))
+                self.shock_level[i] = applied
+                self.shock_until[i] = now + duration
+                result["AB"[i]] = {"applied": applied, "seconds": duration, "clamped": applied != v or duration != secs}
+                parts.append(f"{'AB'[i]} at {applied:.0f} for {duration:.0f} s")
+            self.log(f"SHOCK ({source}): " + ", ".join(parts))
+            return result
+
+    def start_shock(self, ch, level, seconds, source: str = "osc") -> dict:
+        """The same level and duration on one or both channels (see start_shocks)."""
+        chans = channels_from(ch)
+        per = self.start_shocks({"AB"[i]: (level, seconds) for i in chans}, source)
+        first = per["AB"[chans[0]]]
+        return {"channels": _names(chans), "applied": first["applied"], "seconds": first["seconds"],
+                "clamped": any(v["clamped"] for v in per.values())}
 
     def stop_shock(self, reason: str = "") -> bool:
-        """Cancels a running shock at once. Returns True if there was one."""
+        """Cancels every running shock at once. Returns True if there was one."""
         with self._lock:
             was = self._shock_running(self._clock())
-            self.shock_until = 0.0
-            self.shock_level = [0.0, 0.0]
+            self._clear_shock_locked()
             if was:
                 self.log("Shock stopped" + (f": {reason}" if reason else ""))
             return was
@@ -271,8 +298,7 @@ class Controller:
     def emergency_stop(self, source: str = "gui") -> None:
         with self._lock:
             self.estopped = True
-            self.shock_until = 0.0
-            self.shock_level = [0.0, 0.0]
+            self._clear_shock_locked()
             for c in self.ch:
                 c.target = 0.0
                 c.output = 0.0
@@ -288,8 +314,7 @@ class Controller:
 
     def reset_on_connect(self) -> None:
         with self._lock:
-            self.shock_until = 0.0
-            self.shock_level = [0.0, 0.0]
+            self._clear_shock_locked()
             for c in self.ch:
                 c.target = 0.0
                 c.output = 0.0
@@ -351,13 +376,12 @@ class Controller:
             now = self._clock()
             self._watchdog(now)
             self._expire_shock(now)
-            shock_on = self._shock_running(now)
             cap = self.settings.max_intensity
             up = self.settings.ramp_up_per_s
             intens: list[int] = []
             for i, c in enumerate(self.ch):
                 target = c.target
-                if shock_on and not self.estopped:
+                if self._channel_shocking(i, now) and not self.estopped:
                     target = max(target, min(self.shock_level[i], float(cap)))  # a minimum, never a reduction
                 if self.estopped:
                     c.target = 0.0
@@ -398,6 +422,7 @@ class Controller:
             now = self._clock()
             self._expire_shock(now)
             shock_on = self._shock_running(now)
+            remaining = [max(0.0, self.shock_until[i] - now) if self._channel_shocking(i, now) else 0.0 for i in (0, 1)]
             return {
                 "channels": {
                     "AB"[i]: {
@@ -427,7 +452,8 @@ class Controller:
                 "ai_last_action": self.ai_last_action,
                 "shock": {
                     "active": shock_on,
-                    "remaining_s": round(max(0.0, self.shock_until - now), 1) if shock_on else 0.0,
+                    "remaining_s": round(max(remaining), 1),
+                    "remaining": {"A": round(remaining[0], 1), "B": round(remaining[1], 1)},
                     "level": {"A": round(self.shock_level[0], 1), "B": round(self.shock_level[1], 1)},
                 },
             }

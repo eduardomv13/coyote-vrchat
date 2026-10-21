@@ -6,14 +6,28 @@ Unity (`unity/`) has its own version number, listed in [its changelog](unity/io.
 
 ## Unreleased
 
-- **The chatbox message also appears when the Coyote is not connected.** A touch on the contact now shows
-  `Shock 37% for 5 s` in the VRChat chatbox (and clears it as usual) even without a connected Coyote, but **no shock is
-  delivered**. The chip at the top says *Shock trigger: chatbox only* (gold) instead of *NOT READY*, and the card and the
+- **A new window with three tabs**, like a settings dialog: *Coyote settings* (Bluetooth connection, Channel A, Channel B,
+  Patterns, Safety limits), *Shock contact* (everything about the contact shock) and *Extras* (VRChat OSC, AI / Claude
+  Code MCP, Log). The header with the status chips and STOP ALL stays visible on every tab.
+- **Each channel has its own shock settings**: its own lowest and highest random power and its own shortest and longest
+  random duration (1 to 30 s), drawn separately for A and B at every touch. Controller: a shock now has its own level and
+  end time per channel (`start_shocks`, `shock_active(channel)`); a touch is ignored only while one of ITS channels is
+  shocking.
+- **Several contacts**: a list of contact triggers, each with the channels it fires. The default is `ShockOsc/_all`, which
+  fires **both channels**; "Add trigger" adds more (up to 8). Settings: `shock_a_*`/`shock_b_*` and `shock_triggers`
+  replace `shock_min_pct`, `shock_max_pct`, `shock_seconds`, `shock_channels` and `osc_param_shock`; a settings file from an
+  older version is converted (the same numbers for both channels, one contact with the old channels).
+- The chatbox message now says each channel's numbers: default text `Shock {shock}`, for example
+  `Shock A 37% for 5 s, B 20% for 3 s`. Also `{percent}`, `{seconds}` (the highest and the longest), `{a_percent}`,
+  `{a_seconds}`, `{b_percent}`, `{b_seconds}`. A saved copy of an old default text takes the new default.
+- **The chatbox message also appears when the Coyote is not connected.** A touch on a contact now shows the message
+  (for example `Shock A 37% for 5 s, B 20% for 3 s`) in the VRChat chatbox, and clears it as usual, even without a connected
+  Coyote, but **no shock is delivered**. The chip at the top says *Shock trigger: chatbox only* (gold) instead of *NOT READY*, and the card and the
   bottom of the window say the touch only reached the chatbox. During the announced seconds a second touch is not announced
   on top of it. If the chatbox message is off, empty or too soon after another, such a touch is still ignored. With the
   emergency stop active nothing is announced, as before.
 - Switching the trigger off now also takes a message that is still on screen off the chatbox.
-- 271 automated tests (it was 261).
+- 298 automated tests (it was 261).
 
 ## 1.2.1 (2026-10-20)
 

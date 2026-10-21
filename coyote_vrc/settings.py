@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Optional
 
@@ -24,6 +24,39 @@ def _clamp_int(value, lo: int, hi: int, default: int) -> int:
         return max(lo, min(hi, int(round(float(value)))))
     except (TypeError, ValueError):
         return default
+
+
+DEFAULT_CONTACT = "ShockOsc/_all"      # the contact of the ShockOSC / OpenShock avatar prefabs
+DEFAULT_CHATBOX_TEXT = "Shock {shock}"
+MAX_SHOCK_TRIGGERS = 8
+SHOCK_CHANNELS = ("a", "b")            # the two channels have their own random power and duration
+
+
+def default_triggers() -> list:
+    """One trigger, on the standard contact, that fires BOTH channels."""
+    return [{"param": DEFAULT_CONTACT, "a": True, "b": True}]
+
+
+def normalize_triggers(value) -> list:
+    """A clean list of {"param", "a", "b"}: names stripped, empty ones and repeats (ignoring upper/lower case) dropped, at
+    most MAX_SHOCK_TRIGGERS, and every trigger fires at least one channel. Anything that is not a list gives the default."""
+    if not isinstance(value, (list, tuple)):
+        return default_triggers()
+    out, seen = [], set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        param = str(item.get("param") or "").strip()
+        if not param or param.lower() in seen:
+            continue
+        a, b = bool(item.get("a", True)), bool(item.get("b", True))
+        if not a and not b:
+            a = b = True
+        seen.add(param.lower())
+        out.append({"param": param, "a": a, "b": b})
+        if len(out) >= MAX_SHOCK_TRIGGERS:
+            break
+    return out
 
 
 @dataclass
@@ -48,17 +81,23 @@ class Settings:
     osc_param_stop: str = "CoyoteStop"
     osc_param_freq: str = "CoyoteFreq"   # Int in Hz (1..100) -> frequency of BOTH channels
     osc_timeout_s: int = 0            # 0 = off; >0 zeroes the OSC channels if VRChat goes silent
-    # --- shock trigger: someone touches the avatar's ShockOSC contact -> a timed shock at a random power
-    osc_param_shock: str = "ShockOsc/_all"  # bool contact on the avatar (compared ignoring upper/lower case)
+    # --- shock trigger: someone touches a contact on the avatar -> a timed shock at a random power, per channel
     shock_enabled: bool = False       # NOT persisted: always starts off
-    shock_min_pct: int = 10           # the power is drawn at random between these two, in % of the intensity ceiling
-    shock_max_pct: int = 30
-    shock_seconds: int = 3            # how long one shock lasts (1..30)
-    shock_channels: str = "AB"        # "A", "B" or "AB"
+    # each channel draws its own power (% of the intensity ceiling) and its own duration (1..30 s) between these limits
+    shock_a_min_pct: int = 10
+    shock_a_max_pct: int = 30
+    shock_a_min_s: int = 3
+    shock_a_max_s: int = 5
+    shock_b_min_pct: int = 10
+    shock_b_max_pct: int = 30
+    shock_b_min_s: int = 3
+    shock_b_max_s: int = 5
+    # contacts (bool avatar parameters, compared ignoring upper/lower case) and the channels each one fires
+    shock_triggers: list = field(default_factory=default_triggers)
     chatbox_enabled: bool = True      # say the power in the VRChat chatbox when a shock starts
     chatbox_host: str = "127.0.0.1"
     chatbox_port: int = 9000          # VRChat listens for OSC input here (its output goes to 9001)
-    chatbox_text: str = "Shock {percent}% for {seconds} s"   # {percent} and {seconds} are replaced
+    chatbox_text: str = DEFAULT_CHATBOX_TEXT   # {shock} = "A 37% for 5 s, B 20% for 3 s"; see shock.render_text
     chatbox_clear_s: int = 3          # remove the message from the chatbox after this many seconds (0 = leave it to VRChat)
     # --- AI
     ai_enabled: bool = False          # NOT persisted: always starts off
@@ -68,6 +107,12 @@ class Settings:
     # --- initial defaults for each channel
     default_freq_hz: float = 50.0
     default_width: int = 100
+
+    def shock_limits(self, ch: str) -> tuple:
+        """(min %, max %, min s, max s) of one channel, "A" or "B"."""
+        c = str(ch).lower()
+        return (getattr(self, f"shock_{c}_min_pct"), getattr(self, f"shock_{c}_max_pct"),
+                getattr(self, f"shock_{c}_min_s"), getattr(self, f"shock_{c}_max_s"))
 
     def validate(self) -> "Settings":
         self.max_intensity = _clamp_int(self.max_intensity, 0, 200, 200)
@@ -79,13 +124,14 @@ class Settings:
         self.osc_timeout_s = _clamp_int(self.osc_timeout_s, 0, 3600, 0)
         self.ai_cap = _clamp_int(self.ai_cap, 0, 200, 50)
         self.default_width = _clamp_int(self.default_width, 0, 100, 100)
-        self.shock_min_pct = _clamp_int(self.shock_min_pct, 1, 100, 10)
-        self.shock_max_pct = _clamp_int(self.shock_max_pct, 1, 100, 30)
-        if self.shock_min_pct > self.shock_max_pct:
-            self.shock_min_pct, self.shock_max_pct = self.shock_max_pct, self.shock_min_pct
-        self.shock_seconds = _clamp_int(self.shock_seconds, 1, 30, 3)
-        letters = "".join(c for c in "AB" if c in str(self.shock_channels).upper())
-        self.shock_channels = letters or "AB"
+        for ch in SHOCK_CHANNELS:
+            for kind, lo, hi, d_lo, d_hi in (("pct", 1, 100, 10, 30), ("s", 1, 30, 3, 5)):
+                low, high = f"shock_{ch}_min_{kind}", f"shock_{ch}_max_{kind}"
+                a = _clamp_int(getattr(self, low), lo, hi, d_lo)
+                b = _clamp_int(getattr(self, high), lo, hi, d_hi)
+                setattr(self, low, min(a, b))
+                setattr(self, high, max(a, b))
+        self.shock_triggers = normalize_triggers(self.shock_triggers)
         self.chatbox_port = _clamp_int(self.chatbox_port, 1, 65535, 9000)
         self.chatbox_host = str(self.chatbox_host or "127.0.0.1").strip() or "127.0.0.1"
         self.chatbox_text = str(self.chatbox_text if self.chatbox_text is not None else "")[:100]
@@ -99,7 +145,7 @@ class Settings:
         except (TypeError, ValueError):
             self.default_freq_hz = 50.0
         self.osc_host = str(self.osc_host or "127.0.0.1")
-        for name in ("osc_param_a", "osc_param_b", "osc_param_stop", "osc_param_freq", "osc_param_shock"):
+        for name in ("osc_param_a", "osc_param_b", "osc_param_stop", "osc_param_freq"):
             setattr(self, name, str(getattr(self, name) or "").strip())
         self.ai_enabled = bool(self.ai_enabled)
         self.osc_enabled = bool(self.osc_enabled)
@@ -123,9 +169,34 @@ def _import_store_python_settings(target: Path) -> None:
         pass
 
 
-# Before 1.2.1 the default message only said the power. A settings file that still holds exactly that text was not edited
-# on purpose (the program saves every field), so it takes the new default, which also says how long the shock lasts.
-_OLD_DEFAULT_CHATBOX_TEXTS = ("Shock {percent}%",)
+# The old default messages only said one power (and, from 1.2.1, one duration). A settings file that still holds exactly
+# one of them was not edited on purpose (the program saves every field), so it takes the new default, which says the power
+# and the duration of each channel.
+_OLD_DEFAULT_CHATBOX_TEXTS = ("Shock {percent}%", "Shock {percent}% for {seconds} s")
+
+
+_OLD_SHOCK_KEYS = ("osc_param_shock", "shock_min_pct", "shock_max_pct", "shock_seconds", "shock_channels")
+
+
+def _migrate_single_shock(raw: dict) -> None:
+    """Versions up to 1.2.1 had ONE power range, ONE duration, one channel choice and one contact for the whole trigger.
+    The same numbers become the starting point of both channels and of a single trigger (the shock behaves as before)."""
+    if not isinstance(raw, dict) or "shock_triggers" in raw or not any(k in raw for k in _OLD_SHOCK_KEYS):
+        return
+    try:
+        lo, hi = int(raw.get("shock_min_pct", 10)), int(raw.get("shock_max_pct", 30))
+        secs = int(raw.get("shock_seconds", 3))
+    except (TypeError, ValueError):
+        lo, hi, secs = 10, 30, 3
+    for ch in SHOCK_CHANNELS:
+        raw.setdefault(f"shock_{ch}_min_pct", lo)
+        raw.setdefault(f"shock_{ch}_max_pct", hi)
+        raw.setdefault(f"shock_{ch}_min_s", secs)
+        raw.setdefault(f"shock_{ch}_max_s", secs)
+    letters = str(raw.get("shock_channels", "AB")).upper()
+    param = str(raw.get("osc_param_shock") or DEFAULT_CONTACT).strip() or DEFAULT_CONTACT
+    raw["shock_triggers"] = [{"param": param, "a": "A" in letters or "B" not in letters,
+                              "b": "B" in letters or "A" not in letters}]
 
 
 def load_settings(path: Optional[Path] = None) -> Settings:
@@ -137,6 +208,7 @@ def load_settings(path: Optional[Path] = None) -> Settings:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
             known = {f.name for f in fields(Settings)}
+            _migrate_single_shock(raw)
             for key, value in raw.items():
                 if key in known:
                     if key == "chatbox_text" and value in _OLD_DEFAULT_CHATBOX_TEXTS:

@@ -6,12 +6,14 @@ packets even if the window freezes or is being dragged.
 """
 from __future__ import annotations
 
+import copy
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 
 from . import mcp_register, patterns, protocol, resources
 from .control import ControlError
+from .settings import MAX_SHOCK_TRIGGERS
 from .uimath import clamp, value_from_x, x_from_value
 
 # ---------------------------------------------------------------------- theme
@@ -709,16 +711,15 @@ class LimitsCard(Card):
         self._wd_label(self.s_wd.value)
 
 
-class ShockCard(Card):
-    """The ShockOSC contact trigger: a touch on the avatar's contact -> a random shock for a few seconds."""
+class ShockTriggerCard(Card):
+    """The contact trigger: a touch on a contact of the avatar -> a random shock on the channels set for that contact."""
 
     def __init__(self, parent, app):
-        super().__init__(parent, "SHOCK TRIGGER (SHOCKOSC CONTACT)")
+        super().__init__(parent, "SHOCK CONTACT TRIGGER")
         self.app = app
-        s = app.engine.settings
         b = self.body
         self.v_enabled = tk.BooleanVar(value=False)
-        make_check(b, "Enabled: a touch fires a random shock (always starts off)", self.v_enabled,
+        make_check(b, "Enabled: a touch fires random shocks (always starts off)", self.v_enabled,
                    self._toggle).pack(fill="x")
         self.lbl_state = make_label(b, "", fg=DIM, wraplength=330, justify="left")
         self.lbl_state.pack(fill="x", pady=(2, 0))
@@ -727,61 +728,17 @@ class ShockCard(Card):
         self.lbl_ignored = make_label(b, "", fg=RED, font=(FONT, 9), wraplength=330, justify="left")
         self.lbl_ignored.pack(fill="x", pady=(0, 6))
 
-        make_label(b, "Each touch draws a random power between the minimum and the maximum:", fg=DIM,
-                   font=(FONT, 9), wraplength=330, justify="left").pack(fill="x")
-        self.lbl_min = make_label(b, "", fg=TEXT)
-        self.lbl_min.pack(fill="x", pady=(4, 0))
-        self.s_min = GoldSlider(b, 1, 100, value=s.shock_min_pct, command=self._on_min, release=self._apply_range)
-        self.s_min.pack(fill="x")
-        self.lbl_max = make_label(b, "", fg=TEXT)
-        self.lbl_max.pack(fill="x", pady=(4, 0))
-        self.s_max = GoldSlider(b, 1, 100, value=s.shock_max_pct, command=self._on_max, release=self._apply_range)
-        self.s_max.pack(fill="x")
-
-        self.lbl_secs = make_label(b, "", fg=TEXT)
-        self.lbl_secs.pack(fill="x", pady=(4, 0))
-        self.s_secs = GoldSlider(b, 1, 30, value=s.shock_seconds, command=self._secs_label,
-                                 release=lambda v: self.app.engine.configure_shock(shock_seconds=int(v)))
-        self.s_secs.pack(fill="x")
-
-        row = tk.Frame(b, bg=PANEL)
-        row.pack(fill="x", pady=(4, 0))
-        make_label(row, "Shock channels:", fg=DIM).pack(side="left")
-        self.v_a = tk.BooleanVar(value="A" in s.shock_channels)
-        self.v_b = tk.BooleanVar(value="B" in s.shock_channels)
-        make_check(row, "A", self.v_a, self._on_channels).pack(side="left", padx=(6, 0))
-        make_check(row, "B", self.v_b, self._on_channels).pack(side="left", padx=(6, 0))
-
-        self.v_chat = tk.BooleanVar(value=s.chatbox_enabled)
-        make_check(b, "Say the power in the VRChat chatbox when a shock starts", self.v_chat,
-                   self._on_chat).pack(fill="x", pady=(4, 0))
-
-        grid = tk.Frame(b, bg=PANEL)
-        grid.pack(fill="x", pady=4)
-        self.vars = {}
-        rows = (("Contact parameter (bool)", "osc_param_shock", 16),
-                ("Chatbox text ({percent}, {seconds})", "chatbox_text", 16),
-                ("Clear the chatbox after (s, 0 = never)", "chatbox_clear_s", 8),
-                ("Chatbox port (VRChat listens on 9000)", "chatbox_port", 8))
-        for r, (text, attr, width) in enumerate(rows):
-            make_label(grid, text, fg=DIM).grid(row=r, column=0, sticky="w", pady=2)
-            var = tk.StringVar()
-            self.vars[attr] = var
-            make_entry(grid, var, width).grid(row=r, column=1, sticky="e", padx=(8, 0), pady=2)
-        grid.columnconfigure(0, weight=1)
-        self._load_fields()
-
         btns = tk.Frame(b, bg=PANEL)
         btns.pack(fill="x", pady=(2, 0))
-        make_button(btns, "Apply", self._apply, "gold").pack(side="left", padx=(0, 4))
-        make_button(btns, "Test chatbox", self._test_chatbox).pack(side="left", padx=(0, 4))
-        make_button(btns, "Test shock now", self._test_shock).pack(side="left")
+        make_button(btns, "Test shock A+B", lambda: self._test_shock("AB"), "gold").pack(side="left", padx=(0, 4))
+        make_button(btns, "Test A", lambda: self._test_shock("A")).pack(side="left", padx=(0, 4))
+        make_button(btns, "Test B", lambda: self._test_shock("B")).pack(side="left")
         self.lbl_last = make_label(b, "", fg=DIM, font=(FONT, 9), wraplength=330, justify="left")
         self.lbl_last.pack(fill="x", pady=(4, 0))
-        make_label(b, "One shock per touch: a contact that stays on does not repeat, and a touch while a shock is "
-                      "running is ignored. The power is a percentage of the intensity ceiling and follows the rise limit; "
-                      "STOP ALL cancels it. "
-                      "Whoever can touch the contact on your avatar can fire it.",
+        make_label(b, "One shock per touch: a contact that stays on does not repeat, and a touch while a shock is running on "
+                      "its channels is ignored. Each channel draws its own power (a percentage of the intensity ceiling, "
+                      "following the rise limit) and its own duration; STOP ALL cancels everything. "
+                      "Whoever can touch a contact on your avatar can fire it.",
                    fg=DIM, font=(FONT, 9), wraplength=330, justify="left").pack(fill="x", pady=(4, 0))
 
     # ---- helpers
@@ -789,33 +746,27 @@ class ShockCard(Card):
         cap = self.app.engine.control.cap("gui")
         return 0 if cap <= 0 else max(1, int(round(pct * cap / 100.0)))
 
-    def _load_fields(self):
+    def _summary(self):
+        """What a touch does, in words (for the confirmation)."""
         s = self.app.engine.settings
-        for attr, var in self.vars.items():
-            var.set(str(getattr(s, attr)))
-
-    def _power_label(self):
-        lo, hi = int(self.s_min.value), int(self.s_max.value)
-        cap = self.app.engine.control.cap("gui")
-        note = f"  [ceiling {cap}]" if cap != 200 else ""
-        set_text(self.lbl_min, f"Minimum random power: {lo}%   (= {self._units(lo)} of 200){note}")
-        set_text(self.lbl_max, f"Maximum random power: {hi}%   (= {self._units(hi)} of 200){note}")
-
-    def _secs_label(self, v):
-        set_text(self.lbl_secs, f"Each shock lasts {v:.0f} s  (up to 30)")
+        contacts = ", ".join(f"{t['param']} ({'+'.join(c for c, on in (('A', t['a']), ('B', t['b'])) if on)})"
+                             for t in s.shock_triggers) or "(no contact set)"
+        lines = [f"Contacts: {contacts}"]
+        for ch in "AB":
+            lo, hi, slo, shi = s.shock_limits(ch)
+            lines.append(f"Channel {ch}: {lo}% to {hi}% of your intensity ceiling ({self._units(lo)} to {self._units(hi)}), "
+                         f"for {slo} to {shi} s")
+        return "\n".join(lines)
 
     # ---- actions
     def _toggle(self):
         want = bool(self.v_enabled.get())
         e = self.app.engine
         if want:
-            s = e.settings
-            lo, hi = s.shock_min_pct, s.shock_max_pct
             ok = messagebox.askyesno(
                 "Enable the shock trigger",
-                f"Whoever touches the contact {s.osc_param_shock} on your avatar will shock you.\n\n"
-                f"Power: a random value between {lo}% and {hi}% of your intensity ceiling "
-                f"({self._units(lo)} to {self._units(hi)}), for {s.shock_seconds} s, on channel(s) {s.shock_channels}.\n\n"
+                "Whoever touches one of these contacts on your avatar will shock you.\n\n"
+                f"{self._summary()}\n\n"
                 "The ceiling, the rise limit and STOP ALL still apply. It starts off every time you open the program.\n\n"
                 "A shock needs the Coyote, so if it is not connected the program will try to connect it now. "
                 "While it is not connected, a touch only shows the message in the VRChat chatbox (no shock).\n\n"
@@ -831,27 +782,281 @@ class ShockCard(Card):
             self.app.flash("Shock trigger on. The Coyote is not connected yet: connecting… Until the Bluetooth chip says "
                            "Connected, a touch only shows the message in the chatbox (no shock).", GOLD, 12000)
 
-    def _on_min(self, v):
-        if v > self.s_max.value:
-            self.s_max.set(v)
-        self._power_label()
+    def _test_shock(self, channels):
+        res = self.app.engine.test_shock(channels)
+        if res["fired"]:
+            self.app.flash(f"Test shock: {res['text']}.", GOLD)
+        elif res.get("announced"):
+            self.app.flash(f"No shock: the Coyote is not connected. {res['text']} was only shown in the chatbox.", GOLD)
+        else:
+            self.app.flash("No shock: " + res["reason"], RED)
 
-    def _on_max(self, v):
-        if v < self.s_min.value:
-            self.s_min.set(v)
-        self._power_label()
+    # ---- periodic refresh
+    def refresh(self, st, lim):
+        s = self.app.engine.settings
+        if self.v_enabled.get() != st["enabled"]:
+            self.v_enabled.set(st["enabled"])
 
-    def _apply_range(self, _v):
-        self.app.engine.configure_shock(shock_min_pct=int(self.s_min.value), shock_max_pct=int(self.s_max.value))
+        if not st["enabled"]:
+            set_text(self.lbl_state, "● Off: touching a contact does nothing", DIM)
+        elif st["active"]:
+            parts = [f"{ch} {st['level'][ch]:.0f} ({st['remaining'][ch]:.1f} s left)" for ch in "AB"
+                     if st["remaining"][ch] > 0]
+            set_text(self.lbl_state, "● SHOCK  " + "  ·  ".join(parts), RED)
+        elif st["estopped"]:
+            set_text(self.lbl_state, "● Armed, but the emergency stop is active: touches are ignored", RED)
+        elif not s.shock_triggers:
+            set_text(self.lbl_state, "● Armed, but no contact is set: nothing can fire", RED)
+        elif not st["connected"]:
+            set_text(self.lbl_state, "● Armed, Coyote not connected: a touch only shows the chatbox message (no shock)", GOLD)
+        else:
+            names = ", ".join(t["param"] for t in s.shock_triggers)
+            set_text(self.lbl_state, f"● Armed: waiting for a touch on {names}", GREEN)
+        set_text(self.lbl_last, "Last shock: " + (st["last"] or "none yet"))
+        age = st["touch_age_s"]
+        set_text(self.lbl_touch, "no contact touched since the program started" if age is None
+                 else f"{st['touch_param']}: last touched {age:.0f} s ago")
+        ignored_age, announced_age = st["ignored_age_s"], st["announced_age_s"]
+        if announced_age is not None and announced_age < 120 and (ignored_age is None or announced_age <= ignored_age):
+            set_text(self.lbl_ignored, f"Touch {announced_age:.0f} s ago: {st['announced_text']} shown in the chatbox, "
+                                       "no shock (the Coyote is not connected)", GOLD)
+        elif ignored_age is not None and ignored_age < 120:
+            set_text(self.lbl_ignored, f"Ignored a touch {ignored_age:.0f} s ago: {st['ignored_reason']}", RED)
+        else:
+            set_text(self.lbl_ignored, "")
 
-    def _on_channels(self):
-        letters = "".join(n for n, var in (("A", self.v_a), ("B", self.v_b)) if var.get())
-        if not letters:
-            self.app.flash("Pick at least one channel for the shock.", RED)
-            self.v_a.set("A" in self.app.engine.settings.shock_channels)
-            self.v_b.set("B" in self.app.engine.settings.shock_channels)
+
+class ContactListCard(Card):
+    """The contacts (avatar parameters) that fire a shock, and which channels each one fires. Several can be added."""
+
+    def __init__(self, parent, app):
+        super().__init__(parent, "CONTACT TRIGGERS")
+        self.app = app
+        b = self.body
+        make_label(b, "A touch on a contact fires the ticked channels. ShockOsc/_all is the standard one and fires both. "
+                      "Add more for other contacts on your avatar (bool parameters).", fg=DIM, font=(FONT, 9),
+                   wraplength=330, justify="left").pack(fill="x", pady=(0, 6))
+        head = tk.Frame(b, bg=PANEL)
+        head.pack(fill="x")
+        make_label(head, "Contact parameter", fg=DIM, font=(FONT, 9)).pack(side="left")
+        make_label(head, "Fires", fg=DIM, font=(FONT, 9)).pack(side="right", padx=(0, 38))
+        self.rows_frame = tk.Frame(b, bg=PANEL)
+        self.rows_frame.pack(fill="x")
+        self.rows: list = []
+        btns = tk.Frame(b, bg=PANEL)
+        btns.pack(fill="x", pady=(6, 0))
+        self.btn_add = make_button(btns, "Add trigger", self._add)
+        self.btn_add.pack(side="left", padx=(0, 4))
+        make_button(btns, "Apply", self._apply, "gold").pack(side="left")
+        self._applied = None     # the triggers the rows were built from, or last applied
+        self._rebuild(app.engine.settings.shock_triggers)
+
+    # ---- rows
+    def _rebuild(self, triggers):
+        for row in self.rows:
+            row["frame"].destroy()
+        self.rows = []
+        for t in triggers:
+            self._add_row(t["param"], t["a"], t["b"])
+        self._applied = copy.deepcopy(triggers)
+        self.btn_add.config(state="normal" if len(self.rows) < MAX_SHOCK_TRIGGERS else "disabled")
+
+    def _add_row(self, param="", a=True, b=True):
+        frame = tk.Frame(self.rows_frame, bg=PANEL)
+        frame.pack(fill="x", pady=2)
+        row = {"frame": frame, "param": tk.StringVar(value=param), "a": tk.BooleanVar(value=a),
+               "b": tk.BooleanVar(value=b)}
+        entry = make_entry(frame, row["param"], 20)
+        entry.pack(side="left", fill="x", expand=True)
+        entry.bind("<Return>", lambda e: self._apply(quiet=True))
+        entry.bind("<FocusOut>", lambda e: self._apply(quiet=True))
+        make_button(frame, "✕", lambda r=row: self._remove(r)).pack(side="right", padx=(6, 0))
+        make_check(frame, "B", row["b"], lambda r=row: self._on_check(r, "b")).pack(side="right")
+        make_check(frame, "A", row["a"], lambda r=row: self._on_check(r, "a")).pack(side="right")
+        row["entry"] = entry
+        self.rows.append(row)
+        return row
+
+    def _on_check(self, row, which):
+        if not row["a"].get() and not row["b"].get():
+            row[which].set(True)
+            self.app.flash("A contact has to fire at least one channel.", RED)
             return
-        self.app.engine.configure_shock(shock_channels=letters)
+        self._apply(quiet=True)
+
+    def _add(self):
+        if len(self.rows) >= MAX_SHOCK_TRIGGERS:
+            self.app.flash(f"At most {MAX_SHOCK_TRIGGERS} contacts.", RED)
+            return
+        row = self._add_row("", True, True)
+        row["entry"].focus_set()
+        if len(self.rows) >= MAX_SHOCK_TRIGGERS:
+            self.btn_add.config(state="disabled")
+
+    def _remove(self, row):
+        row["frame"].destroy()
+        self.rows.remove(row)
+        self.btn_add.config(state="normal")
+        self._apply(quiet=True)
+
+    def _collect(self):
+        """The rows as a list of triggers; empty names are left out. None (with a message) if something is wrong."""
+        out, seen = [], set()
+        for row in self.rows:
+            param = row["param"].get().strip()
+            if not param:
+                continue
+            if param.lower() in seen:
+                self.app.flash(f"The contact {param} is listed twice.", RED)
+                return None
+            seen.add(param.lower())
+            out.append({"param": param, "a": bool(row["a"].get()), "b": bool(row["b"].get())})
+        return out
+
+    def _apply(self, quiet=False):
+        triggers = self._collect()
+        if triggers is None:
+            return
+        self.app.engine.configure_shock(shock_triggers=triggers)
+        self._applied = copy.deepcopy(self.app.engine.settings.shock_triggers)
+        if not quiet:
+            n = len(triggers)
+            self.app.flash(f"{n} contact trigger{'s' if n != 1 else ''} applied." if n else
+                           "No contact set: nothing can fire a shock.", GOLD if n else RED)
+
+    # ---- periodic refresh
+    def refresh(self):
+        current = self.app.engine.settings.shock_triggers
+        if current != self._applied:     # changed from somewhere else: show it (typing in the rows is left alone)
+            self._rebuild(current)
+
+
+class ShockChannelCard(Card):
+    """One channel's random shock: its own power range (% of the ceiling) and its own duration range (up to 30 s)."""
+
+    def __init__(self, parent, app, ch):
+        self.ch = ch
+        self.c = ch.lower()
+        super().__init__(parent, f"CHANNEL {ch} SHOCK")
+        self.app = app
+        s = app.engine.settings
+        lo, hi, slo, shi = s.shock_limits(ch)
+        b = self.body
+        make_label(b, f"Each touch draws a random power and a random duration for channel {ch}, between the minimum and "
+                      "the maximum:", fg=DIM, font=(FONT, 9), wraplength=330, justify="left").pack(fill="x")
+        self.lbl_pmin = make_label(b, "", fg=TEXT)
+        self.lbl_pmin.pack(fill="x", pady=(6, 0))
+        self.s_pmin = GoldSlider(b, 1, 100, value=lo, command=self._on_pmin, release=lambda v: self._apply("pct"))
+        self.s_pmin.pack(fill="x")
+        self.lbl_pmax = make_label(b, "", fg=TEXT)
+        self.lbl_pmax.pack(fill="x", pady=(4, 0))
+        self.s_pmax = GoldSlider(b, 1, 100, value=hi, command=self._on_pmax, release=lambda v: self._apply("pct"))
+        self.s_pmax.pack(fill="x")
+        self.lbl_smin = make_label(b, "", fg=TEXT)
+        self.lbl_smin.pack(fill="x", pady=(10, 0))
+        self.s_smin = GoldSlider(b, 1, 30, value=slo, command=self._on_smin, release=lambda v: self._apply("s"))
+        self.s_smin.pack(fill="x")
+        self.lbl_smax = make_label(b, "", fg=TEXT)
+        self.lbl_smax.pack(fill="x", pady=(4, 0))
+        self.s_smax = GoldSlider(b, 1, 30, value=shi, command=self._on_smax, release=lambda v: self._apply("s"))
+        self.s_smax.pack(fill="x")
+        self.lbl_sum = make_label(b, "", fg=GOLD, font=(FONT, 9), wraplength=330, justify="left")
+        self.lbl_sum.pack(fill="x", pady=(8, 0))
+        self._labels()
+
+    # ---- helpers
+    def _units(self, pct):
+        cap = self.app.engine.control.cap("gui")
+        return 0 if cap <= 0 else max(1, int(round(pct * cap / 100.0)))
+
+    def _labels(self):
+        pmin, pmax = int(self.s_pmin.value), int(self.s_pmax.value)
+        smin, smax = int(self.s_smin.value), int(self.s_smax.value)
+        cap = self.app.engine.control.cap("gui")
+        note = f"  [ceiling {cap}]" if cap != 200 else ""
+        set_text(self.lbl_pmin, f"Minimum random power: {pmin}%   (= {self._units(pmin)} of 200){note}")
+        set_text(self.lbl_pmax, f"Maximum random power: {pmax}%   (= {self._units(pmax)} of 200){note}")
+        set_text(self.lbl_smin, f"Minimum random duration: {smin} s")
+        set_text(self.lbl_smax, f"Maximum random duration: {smax} s   (up to 30)")
+        set_text(self.lbl_sum, f"A touch: {pmin}–{pmax}% for {smin}–{smax} s on channel {self.ch}")
+
+    def _on_pmin(self, v):
+        if v > self.s_pmax.value:
+            self.s_pmax.set(v)
+        self._labels()
+
+    def _on_pmax(self, v):
+        if v < self.s_pmin.value:
+            self.s_pmin.set(v)
+        self._labels()
+
+    def _on_smin(self, v):
+        if v > self.s_smax.value:
+            self.s_smax.set(v)
+        self._labels()
+
+    def _on_smax(self, v):
+        if v < self.s_smin.value:
+            self.s_smin.set(v)
+        self._labels()
+
+    def _apply(self, kind):
+        c = self.c
+        if kind == "pct":
+            self.app.engine.configure_shock(**{f"shock_{c}_min_pct": int(self.s_pmin.value),
+                                               f"shock_{c}_max_pct": int(self.s_pmax.value)})
+        else:
+            self.app.engine.configure_shock(**{f"shock_{c}_min_s": int(self.s_smin.value),
+                                               f"shock_{c}_max_s": int(self.s_smax.value)})
+
+    # ---- periodic refresh
+    def refresh(self):
+        lo, hi, slo, shi = self.app.engine.settings.shock_limits(self.ch)
+        if not (self.s_pmin.dragging or self.s_pmax.dragging):
+            self.s_pmin.set(lo)
+            self.s_pmax.set(hi)
+        if not (self.s_smin.dragging or self.s_smax.dragging):
+            self.s_smin.set(slo)
+            self.s_smax.set(shi)
+        self._labels()
+
+
+class ChatboxCard(Card):
+    """What the VRChat chatbox says when a shock starts (the power and duration of each channel), and for how long."""
+
+    def __init__(self, parent, app):
+        super().__init__(parent, "VRCHAT CHATBOX MESSAGE")
+        self.app = app
+        s = app.engine.settings
+        b = self.body
+        self.v_chat = tk.BooleanVar(value=s.chatbox_enabled)
+        make_check(b, "Say the power and the duration in the VRChat chatbox when a shock starts", self.v_chat,
+                   self._on_chat).pack(fill="x")
+        grid = tk.Frame(b, bg=PANEL)
+        grid.pack(fill="x", pady=4)
+        self.vars = {}
+        rows = (("Chatbox text", "chatbox_text", 44),
+                ("Clear the chatbox after (s, 0 = never)", "chatbox_clear_s", 8),
+                ("Chatbox port (VRChat listens on 9000)", "chatbox_port", 8))
+        for r, (text, attr, width) in enumerate(rows):
+            make_label(grid, text, fg=DIM).grid(row=r, column=0, sticky="w", pady=2)
+            var = tk.StringVar()
+            self.vars[attr] = var
+            make_entry(grid, var, width).grid(row=r, column=1, sticky="w", padx=(12, 0), pady=2)
+        self._load_fields()
+        make_label(b, "In the text, {shock} becomes the numbers of the channels that fire, for example "
+                      "“A 37% for 5 s, B 20% for 3 s”. Also: {percent} and {seconds} (the highest power and the longest "
+                      "duration), {a_percent} {a_seconds} {b_percent} {b_seconds}.",
+                   fg=DIM, font=(FONT, 9), wraplength=700, justify="left").pack(fill="x", pady=(0, 4))
+        btns = tk.Frame(b, bg=PANEL)
+        btns.pack(fill="x")
+        make_button(btns, "Apply", self._apply, "gold").pack(side="left", padx=(0, 4))
+        make_button(btns, "Test chatbox", self._test_chatbox).pack(side="left")
+
+    def _load_fields(self):
+        s = self.app.engine.settings
+        for attr, var in self.vars.items():
+            var.set(str(getattr(s, attr)))
 
     def _on_chat(self):
         self.app.engine.configure_shock(chatbox_enabled=bool(self.v_chat.get()))
@@ -872,13 +1077,12 @@ class ShockCard(Card):
             self.app.flash("Invalid number of seconds to clear the chatbox: use 0 to 60 (0 = never clear).", RED)
             return
         self.app.engine.configure_shock(
-            osc_param_shock=self.vars["osc_param_shock"].get().strip(),
             chatbox_text=self.vars["chatbox_text"].get(),
             chatbox_clear_s=clear_s,
             chatbox_port=port,
         )
         self._load_fields()
-        self.app.flash("Shock trigger settings applied.", GOLD)
+        self.app.flash("Chatbox settings applied.", GOLD)
 
     def _test_chatbox(self):
         s = self.app.engine.settings
@@ -887,58 +1091,10 @@ class ShockCard(Card):
         else:
             self.app.flash("Could not send the chatbox message (see the log).", RED)
 
-    def _test_shock(self):
-        res = self.app.engine.test_shock()
-        if res["fired"]:
-            self.app.flash(f"Test shock: {res['percent']}% for {res['seconds']:.0f} s.", GOLD)
-        elif res.get("announced"):
-            self.app.flash(f"No shock: the Coyote is not connected. {res['percent']}% for {res['seconds']:.0f} s was only "
-                           "shown in the chatbox.", GOLD)
-        else:
-            self.app.flash("No shock: " + res["reason"], RED)
-
-    # ---- periodic refresh
-    def refresh(self, st, lim):
+    def refresh(self):
         s = self.app.engine.settings
-        if self.v_enabled.get() != st["enabled"]:
-            self.v_enabled.set(st["enabled"])
-        if not (self.s_min.dragging or self.s_max.dragging):
-            self.s_min.set(s.shock_min_pct)
-            self.s_max.set(s.shock_max_pct)
-        self.s_secs.set(s.shock_seconds)
-        for var, letter in ((self.v_a, "A"), (self.v_b, "B")):
-            if var.get() != (letter in s.shock_channels):
-                var.set(letter in s.shock_channels)
         if self.v_chat.get() != s.chatbox_enabled:
             self.v_chat.set(s.chatbox_enabled)
-        self._power_label()
-        self._secs_label(self.s_secs.value)
-
-        if not st["enabled"]:
-            set_text(self.lbl_state, "● Off: touching the contact does nothing", DIM)
-        elif st["active"]:
-            lv = st["level"]
-            set_text(self.lbl_state,
-                     f"● SHOCK  A {lv['A']:.0f}  ·  B {lv['B']:.0f}  ·  {st['remaining_s']:.1f} s left", RED)
-        elif st["estopped"]:
-            set_text(self.lbl_state, "● Armed, but the emergency stop is active: touches are ignored", RED)
-        elif not st["connected"]:
-            set_text(self.lbl_state, "● Armed, Coyote not connected: a touch only shows the chatbox message (no shock)", GOLD)
-        else:
-            set_text(self.lbl_state, f"● Armed: waiting for a touch on {s.osc_param_shock or '(no parameter set)'}", GREEN)
-        set_text(self.lbl_last, "Last shock: " + (st["last"] or "none yet"))
-        age = st["touch_age_s"]
-        name = s.osc_param_shock or "the contact"
-        set_text(self.lbl_touch, f"{name}: " + ("not touched since the program started" if age is None
-                                                 else f"last touched {age:.0f} s ago"))
-        ignored_age, announced_age = st["ignored_age_s"], st["announced_age_s"]
-        if announced_age is not None and announced_age < 120 and (ignored_age is None or announced_age <= ignored_age):
-            set_text(self.lbl_ignored, f"Touch {announced_age:.0f} s ago: {st['announced_text']} shown in the chatbox, "
-                                       "no shock (the Coyote is not connected)", GOLD)
-        elif ignored_age is not None and ignored_age < 120:
-            set_text(self.lbl_ignored, f"Ignored a touch {ignored_age:.0f} s ago: {st['ignored_reason']}", RED)
-        else:
-            set_text(self.lbl_ignored, "")
 
 
 class LogCard(Card):
@@ -994,9 +1150,7 @@ class App(tk.Tk):
         self._build_header()
         self.msg = tk.Label(self, text="", bg=BG, fg=GOLD, font=(FONT, 10), anchor="w")
         self.msg.pack(side="bottom", fill="x", padx=14, pady=(0, 6))
-        self.scroll = Scrollable(self)
-        self.scroll.pack(fill="both", expand=True)
-        self._build_body(self.scroll.inner)
+        self._build_tabs()
 
         self.bind_all("<Escape>", lambda e: self.panic())
         self.bind_all("<MouseWheel>", self._on_wheel)
@@ -1028,26 +1182,93 @@ class App(tk.Tk):
             chip.pack(side="left")
         tk.Frame(self, bg=GOLD_DIM, height=1).pack(side="top", fill="x", padx=14)
 
-    def _build_body(self, inner):
-        for c in range(3):
+    def _style_tabs(self):
+        """The tab bar, in the black and gold theme (ttk draws it; the rest of the window is plain tk)."""
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(14, 8, 14, 0),
+                        bordercolor=GOLD_DIM, lightcolor=BG, darkcolor=BG)
+        style.configure("TNotebook.Tab", background=PANEL, foreground=DIM, padding=(22, 8), borderwidth=0,
+                        font=(FONT, 10, "bold"), bordercolor=BG, lightcolor=PANEL, darkcolor=PANEL)
+        style.map("TNotebook.Tab",
+                  background=[("selected", PANEL_HI), ("active", "#1B1B1B")],
+                  foreground=[("selected", GOLD), ("active", GOLD_HI)],
+                  lightcolor=[("selected", PANEL_HI)], darkcolor=[("selected", PANEL_HI)])
+        # no dotted focus rectangle inside the tab
+        style.layout("TNotebook.Tab", [("Notebook.tab", {"sticky": "nswe", "children": [
+            ("Notebook.padding", {"side": "top", "sticky": "nswe", "children": [
+                ("Notebook.label", {"side": "top", "sticky": ""})]})]})])
+
+    def _build_tabs(self):
+        self._style_tabs()
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(side="top", fill="both", expand=True)
+        self.tab_scrolls = []
+        for title in ("Coyote settings", "Shock contact", "Extras"):
+            scroll = Scrollable(self.notebook)
+            self.notebook.add(scroll, text=title)
+            self.tab_scrolls.append(scroll)
+        self.scroll = self.tab_scrolls[0]
+        self._build_coyote_tab(self.tab_scrolls[0].inner)
+        self._build_shock_tab(self.tab_scrolls[1].inner)
+        self._build_extras_tab(self.tab_scrolls[2].inner)
+
+    @staticmethod
+    def _columns(inner, count=3):
+        for c in range(count):
             inner.columnconfigure(c, weight=1, uniform="col")
         cols = []
-        for c in range(3):
+        for c in range(count):
             frame = tk.Frame(inner, bg=BG)
-            frame.grid(row=0, column=c, sticky="nsew", padx=(14 if c == 0 else 6, 14 if c == 2 else 6), pady=10)
+            frame.grid(row=0, column=c, sticky="nsew", padx=(14 if c == 0 else 6, 14 if c == count - 1 else 6), pady=10)
             cols.append(frame)
+        return cols
 
+    def _build_coyote_tab(self, inner):
+        """Everything about the device: Bluetooth, the two channels, patterns and the safety limits."""
+        cols = self._columns(inner)
         self.bt = BluetoothCard(cols[0], self)
-        self.panel_a = ChannelPanel(cols[0], self, 0)
-        self.panel_b = ChannelPanel(cols[0], self, 1)
-        self.osc = OscCard(cols[1], self)
-        self.pat = PatternCard(cols[1], self)
-        self.limits = LimitsCard(cols[1], self)
-        self.shock = ShockCard(cols[2], self)
-        self.ai = AiCard(cols[2], self)
-        self.log = LogCard(cols[2])
-        for card in (self.bt, self.panel_a, self.panel_b, self.osc, self.pat, self.limits, self.shock, self.ai):
+        self.limits = LimitsCard(cols[0], self)
+        self.panel_a = ChannelPanel(cols[1], self, 0)
+        self.panel_b = ChannelPanel(cols[1], self, 1)
+        self.pat = PatternCard(cols[2], self)
+        for card in (self.bt, self.limits, self.panel_a, self.panel_b, self.pat):
             card.pack(fill="x", pady=(0, 10))
+
+    def _build_shock_tab(self, inner):
+        """The contact shock: the switch and the contacts, then one card per channel, and the chatbox message below."""
+        for c in range(3):
+            inner.columnconfigure(c, weight=1, uniform="col")
+        left = tk.Frame(inner, bg=BG)
+        left.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=(14, 6), pady=10)
+        top_a = tk.Frame(inner, bg=BG)
+        top_a.grid(row=0, column=1, sticky="nsew", padx=6, pady=(10, 0))
+        top_b = tk.Frame(inner, bg=BG)
+        top_b.grid(row=0, column=2, sticky="nsew", padx=(6, 14), pady=(10, 0))
+        bottom = tk.Frame(inner, bg=BG)
+        bottom.grid(row=1, column=1, columnspan=2, sticky="new", padx=(6, 14), pady=10)
+        self.shock = ShockTriggerCard(left, self)
+        self.contacts = ContactListCard(left, self)
+        self.shock_a = ShockChannelCard(top_a, self, "A")
+        self.shock_b = ShockChannelCard(top_b, self, "B")
+        self.chat = ChatboxCard(bottom, self)
+        self.shock.pack(fill="x", pady=(0, 10))
+        self.contacts.pack(fill="x")
+        self.shock_a.pack(fill="x")
+        self.shock_b.pack(fill="x")
+        self.chat.pack(fill="x")
+
+    def _build_extras_tab(self, inner):
+        """VRChat OSC, the AI (Claude Code / MCP) and the log."""
+        cols = self._columns(inner)
+        self.osc = OscCard(cols[0], self)
+        self.ai = AiCard(cols[1], self)
+        self.log = LogCard(cols[2])
+        self.osc.pack(fill="x", pady=(0, 10))
+        self.ai.pack(fill="x", pady=(0, 10))
         self.log.pack(fill="both", expand=True)
 
     # ---- actions
@@ -1079,7 +1300,11 @@ class App(tk.Tk):
     def _on_wheel(self, event):
         if isinstance(event.widget, tk.Text):
             return  # the log scrolls by itself
-        self.scroll.wheel(event.delta)
+        try:
+            current = self.tab_scrolls[self.notebook.index("current")]
+        except (tk.TclError, IndexError):
+            current = self.scroll
+        current.wheel(event.delta)
 
     def on_close(self):
         self._closing = True
@@ -1156,6 +1381,10 @@ class App(tk.Tk):
         self.pat.refresh(snap["pattern"])
         self.limits.refresh(lim)
         self.shock.refresh(shock, lim)
+        self.contacts.refresh()
+        self.shock_a.refresh()
+        self.shock_b.refresh()
+        self.chat.refresh()
         if shock["ignored_count"] != self._ignored_seen:    # a new touch that did not fire: say so where it is seen
             self._ignored_seen = shock["ignored_count"]
             self.flash("Shock trigger: a touch was ignored — " + shock["ignored_reason"], RED, 10000)

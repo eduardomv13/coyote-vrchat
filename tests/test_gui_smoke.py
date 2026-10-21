@@ -117,6 +117,37 @@ class _Text(_W):
         pass
 
 
+class _Style:
+    """ttk.Style: the theme calls are accepted and ignored."""
+
+    def __init__(self, *a, **kw):
+        self.calls = []
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return lambda *a, **k: self.calls.append((name, a, k))
+
+
+class _Notebook(_W):
+    """ttk.Notebook: remembers its tabs and which one is showing."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.tabs, self.current = [], 0
+
+    def add(self, child, text=""):
+        self.tabs.append((child, text))
+
+    def select(self, index=None):
+        if index is not None:
+            self.current = index
+        return self.current
+
+    def index(self, what):
+        return self.current if what == "current" else len(self.tabs)
+
+
 class _Var:
     def __init__(self, master=None, value=None):
         self._v = value
@@ -144,6 +175,11 @@ def build_fake_tkinter():
         setattr(tk, name, type(name, (_W,), {}))
     tk.OptionMenu = _OptionMenu
     tk.Text = _Text
+    tk.TclError = type("TclError", (Exception,), {})
+    ttk = types.ModuleType("tkinter.ttk")
+    ttk.Style = _Style
+    ttk.Notebook = _Notebook
+    tk.ttk = ttk
     tk.StringVar = _StringVar
     tk.BooleanVar = _BooleanVar
     mb = types.ModuleType("tkinter.messagebox")
@@ -156,7 +192,7 @@ def build_fake_tkinter():
 
     mb.askyesno = askyesno
     tk.messagebox = mb
-    return tk, mb
+    return tk, mb, ttk
 
 
 _saved = {}
@@ -166,11 +202,12 @@ fake_mb = None
 
 def setUpModule():
     global gui, fake_mb
-    for name in ("tkinter", "tkinter.messagebox", "coyote_vrc.gui"):
+    for name in ("tkinter", "tkinter.messagebox", "tkinter.ttk", "coyote_vrc.gui"):
         _saved[name] = sys.modules.get(name)
-    tk, fake_mb = build_fake_tkinter()
+    tk, fake_mb, fake_ttk = build_fake_tkinter()
     sys.modules["tkinter"] = tk
     sys.modules["tkinter.messagebox"] = fake_mb
+    sys.modules["tkinter.ttk"] = fake_ttk
     sys.modules.pop("coyote_vrc.gui", None)
     gui = importlib.import_module("coyote_vrc.gui")
 
@@ -516,6 +553,39 @@ class GuiSmoke(unittest.TestCase):
         self.assertIn("25%", self.app.osc.lbl_values.cget("text"))
 
     # ---- shock trigger (ShockOSC contact)
+    # ---- the three tabs
+    def tab_of(self, widget):
+        """The index of the tab a widget lives in (found by walking up to the tab's scrollable area)."""
+        node = widget
+        while node is not None:
+            for i, scroll in enumerate(self.app.tab_scrolls):
+                if node is scroll:
+                    return i
+            node = getattr(node, "master", None)
+        return None
+
+    def test_the_window_has_three_tabs_with_the_right_cards(self):
+        self.assertEqual([title for _, title in self.app.notebook.tabs], ["Coyote settings", "Shock contact", "Extras"])
+        app = self.app
+        for card in (app.bt, app.panel_a, app.panel_b, app.pat, app.limits):
+            self.assertEqual(self.tab_of(card), 0, card)
+        for card in (app.shock, app.contacts, app.shock_a, app.shock_b, app.chat):
+            self.assertEqual(self.tab_of(card), 1, card)
+        for card in (app.osc, app.ai, app.log):
+            self.assertEqual(self.tab_of(card), 2, card)
+        self.refresh()
+        self.assertEqual(self.app._refresh_errors, 0)
+
+    def test_the_mouse_wheel_scrolls_the_tab_that_is_showing(self):
+        calls = []
+        for i, scroll in enumerate(self.app.tab_scrolls):
+            scroll.wheel = lambda delta, i=i: calls.append(i)
+        for tab in (0, 1, 2):
+            self.app.notebook.select(tab)
+            self.app._on_wheel(click(120))
+        self.assertEqual(calls, [0, 1, 2])
+
+    # ---- the shock trigger card
     def test_shock_enable_asks_for_confirmation_and_shows_in_the_header(self):
         card = self.app.shock
         asked = []
@@ -527,8 +597,11 @@ class GuiSmoke(unittest.TestCase):
         self.assertEqual(asked, [])                                # refused: nothing was connected
         self.assertFalse(card.v_enabled.get())
         self.assertEqual(len(fake_mb.asked), 1)
-        self.assertIn("ShockOsc/_all", fake_mb.asked[0][1])
-        self.assertIn("10% and 30%", fake_mb.asked[0][1])
+        text = fake_mb.asked[0][1]
+        self.assertIn("ShockOsc/_all (A+B)", text)                 # the contact and the channels it fires
+        self.assertIn("Channel A: 10% to 30%", text)               # each channel's own range
+        self.assertIn("Channel B: 10% to 30%", text)
+        self.assertIn("for 3 to 5 s", text)
         fake_mb.answer = True
         card.v_enabled.set(True)
         card._toggle()
@@ -548,46 +621,279 @@ class GuiSmoke(unittest.TestCase):
         self.refresh()
         self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: off")
 
-    def test_shock_sliders_apply_on_release_and_keep_the_range_ordered(self):
+    def test_the_confirmation_lists_every_contact_with_its_channels(self):
+        self.engine.configure_shock(shock_triggers=[{"param": "ShockOsc/_all", "a": True, "b": True},
+                                                    {"param": "Collar/Touch", "a": True, "b": False}])
+        self.engine.configure_shock(shock_b_min_pct=5, shock_b_max_pct=9, shock_b_min_s=1, shock_b_max_s=2)
+        self.engine.connect = lambda *a, **k: None
         card = self.app.shock
-        s = self.engine.settings
-        card.s_min._press(click(150))
-        card.s_min._up(click(150))                      # about 50%
-        self.assertAlmostEqual(s.shock_min_pct, 50, delta=2)
-        self.assertGreaterEqual(s.shock_max_pct, s.shock_min_pct)       # the highest end was pushed up with it
-        card.s_max._press(click(12))
-        card.s_max._up(click(12))                       # all the way left: 1%
-        self.assertEqual((s.shock_min_pct, s.shock_max_pct), (1, 1))
-        card.s_secs.release(12)
-        self.assertEqual(s.shock_seconds, 12)
-        self.refresh()
-        self.assertIn("12 s", card.lbl_secs.cget("text"))
-        self.assertIn("Minimum random power: 1%", card.lbl_min.cget("text"))
-        self.assertIn("Maximum random power: 1%", card.lbl_max.cget("text"))
-        self.assertNotIn("s_cool", vars(card))                          # there is no pause slider any more
-        card.s_secs._user_set(30)
-        self.assertEqual(card.s_secs.value, 30.0)       # the slider tops out at 30 seconds
-        card.s_secs._user_set(99)
-        self.assertEqual(card.s_secs.value, 30.0)
+        card.v_enabled.set(True)
+        card._toggle()
+        text = fake_mb.asked[0][1]
+        self.assertIn("ShockOsc/_all (A+B), Collar/Touch (A)", text)
+        self.assertIn("Channel B: 5% to 9%", text)
+        self.assertIn("for 1 to 2 s", text)
 
-    def test_shock_channels_and_chatbox_switch(self):
+    def test_shock_state_text_follows_the_trigger(self):
         card = self.app.shock
-        card.v_a.set(False)
-        card._on_channels()
-        self.assertEqual(self.engine.settings.shock_channels, "B")
-        card.v_b.set(False)
-        card._on_channels()                             # nothing left: refused and put back
-        self.assertEqual(self.engine.settings.shock_channels, "B")
-        self.assertTrue(card.v_b.get())
-        self.assertIn("at least one", self.app.msg.cget("text"))
+        self.engine.connect = lambda *a, **k: None      # the real Bluetooth is not under test here
+        self.engine.settings.chatbox_enabled = False    # this test is about the window, not the chatbox
+        for ch in "ab":
+            self.engine.configure_shock(**{f"shock_{ch}_min_pct": 40, f"shock_{ch}_max_pct": 40,
+                                           f"shock_{ch}_min_s": 5, f"shock_{ch}_max_s": 5})
+        self.refresh()
+        self.assertIn("Off", card.lbl_state.cget("text"))
+        self.assertIn("no contact touched since the program started", card.lbl_touch.cget("text"))
+        self.engine.set_shock_enabled(True)
+        self.refresh()
+        self.assertIn("not connected", card.lbl_state.cget("text"))
+        self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [True])       # a touch that cannot fire
+        self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [False])
+        self.refresh()
+        self.assertIn("Ignored a touch", card.lbl_ignored.cget("text"))
+        self.assertIn("the Coyote is not connected", card.lbl_ignored.cget("text"))
+        self.assertIn("a touch was ignored", self.app.msg.cget("text"))        # also shown at the bottom of the window
+        self.assertEqual(self.app.msg.cget("fg").lower(), gui.RED.lower())
+        self.assertIn("ShockOsc/_all: last touched", card.lbl_touch.cget("text"))
+        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: chatbox only")
+        self.engine.link.state = "connected"
+        self.refresh()
+        self.assertIn("waiting for a touch on ShockOsc/_all", card.lbl_state.cget("text"))
+        self.assertEqual(card.lbl_state.cget("fg").lower(), gui.GREEN.lower())
+        self.assertIn("none yet", card.lbl_last.cget("text"))
+        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: armed")
+        self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [True])
+        self.refresh()
+        self.assertIn("SHOCK", card.lbl_state.cget("text"))
+        self.assertIn("A 80", card.lbl_state.cget("text"))                      # both channels, each with its own level
+        self.assertIn("B 80", card.lbl_state.cget("text"))
+        self.assertEqual(card.lbl_state.cget("fg").lower(), gui.RED.lower())
+        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock: ACTIVE")
+        self.assertIn("A 40% (80 of 200)", card.lbl_last.cget("text"))
+        self.engine.emergency_stop("gui")
+        self.refresh()
+        self.assertIn("emergency stop", card.lbl_state.cget("text"))
+
+    def test_the_state_line_names_every_contact_and_warns_when_there_is_none(self):
+        card = self.app.shock
+        self.engine.connect = lambda *a, **k: None
+        self.engine.link.state = "connected"
+        self.engine.configure_shock(shock_triggers=[{"param": "ShockOsc/_all", "a": True, "b": True},
+                                                    {"param": "Collar/Touch", "a": True, "b": False}])
+        self.engine.set_shock_enabled(True)
+        self.refresh()
+        self.assertIn("ShockOsc/_all, Collar/Touch", card.lbl_state.cget("text"))
+        self.engine.configure_shock(shock_triggers=[])
+        self.refresh()
+        self.assertIn("no contact is set", card.lbl_state.cget("text"))
+        self.assertEqual(card.lbl_state.cget("fg").lower(), gui.RED.lower())
+
+    def test_a_touch_without_a_coyote_is_shown_as_chatbox_only(self):
+        from coyote_vrc import osc as oscmod
+        card = self.app.shock
+        self.engine.connect = lambda *a, **k: None      # the real Bluetooth is not under test here
+        vrc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        vrc.bind(("127.0.0.1", 0))
+        vrc.settimeout(2.0)
+        try:
+            self.engine.settings.chatbox_port = vrc.getsockname()[1]
+            self.engine.set_shock_enabled(True)
+            self.refresh()
+            self.assertIn("only shows the chatbox message", card.lbl_state.cget("text"))
+            self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: chatbox only")
+            self.assertEqual(self.app.chip_shock.dot.cget("fg").lower(), gui.GOLD.lower())   # not the red of NOT READY
+            self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [True])
+            self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [False])
+            data, _ = vrc.recvfrom(4096)
+            self.assertRegex(oscmod.parse_message(data)[1][0], r"^Shock A \d+% for \d+ s, B \d+% for \d+ s$")
+            self.refresh()
+            self.assertIn("shown in the chatbox", card.lbl_ignored.cget("text"))
+            self.assertIn("no shock", card.lbl_ignored.cget("text"))
+            self.assertNotIn("Ignored", card.lbl_ignored.cget("text"))
+            self.assertEqual(card.lbl_ignored.cget("fg").lower(), gui.GOLD.lower())
+            self.assertIn("chatbox only", self.app.msg.cget("text"))
+            self.assertEqual(self.app.msg.cget("fg").lower(), gui.GOLD.lower())
+            self.assertFalse(self.engine.control.shock_active())
+            self.assertIn("chatbox only", card.lbl_last.cget("text"))
+        finally:
+            vrc.close()
+
+    def test_shock_test_buttons(self):
+        from coyote_vrc import osc as oscmod
+        card, chat = self.app.shock, self.app.chat
+        self.engine.connect = lambda *a, **k: None      # the real Bluetooth is not under test here
+        vrc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        vrc.bind(("127.0.0.1", 0))
+        vrc.settimeout(2.0)
+        try:
+            self.engine.settings.chatbox_port = vrc.getsockname()[1]
+            chat._test_chatbox()
+            data, _ = vrc.recvfrom(4096)
+            # the middle of each channel's default limits: 10..30 % and 3..5 s
+            self.assertEqual(oscmod.parse_message(data)[1][0], "Shock A 20% for 4 s, B 20% for 4 s (test)")
+            self.assertIn("Test message sent", self.app.msg.cget("text"))
+            card._test_shock("AB")
+            self.assertIn("No shock: the trigger is off", self.app.msg.cget("text"))
+            self.engine.set_shock_enabled(True)
+            self.engine.shock._last_send = -1e9    # a real VRChat drops a message that follows within 1.6 s; skip that wait
+            card._test_shock("AB")
+            self.assertIn("not connected", self.app.msg.cget("text"))
+            self.assertIn("only shown in the chatbox", self.app.msg.cget("text"))     # no Coyote: the message, not a shock
+            self.assertFalse(self.engine.control.shock_active())
+            data, _ = vrc.recvfrom(4096)
+            self.assertRegex(oscmod.parse_message(data)[1][0], r"^Shock A \d+% for \d+ s, B \d+% for \d+ s$")
+            self.engine.link.state = "connected"
+            self.engine.shock._last_send = -1e9
+            card._test_shock("A")                  # one channel only
+            self.assertIn("Test shock: A ", self.app.msg.cget("text"))
+            self.assertTrue(self.engine.control.shock_active("A"))
+            self.assertFalse(self.engine.control.shock_active("B"))
+            data, _ = vrc.recvfrom(4096)
+            self.assertRegex(oscmod.parse_message(data)[1][0], r"^Shock A \d+% for \d+ s$")
+            self.engine.shock._last_send = -1e9
+            card._test_shock("AB")                 # A is still shocking: the test is refused, like a real touch
+            self.assertIn("already running on A", self.app.msg.cget("text"))
+            card._test_shock("B")                  # B is free
+            self.assertTrue(self.engine.control.shock_active("B"))
+        finally:
+            vrc.close()
+
+    # ---- the two channel cards
+    def test_each_channel_card_applies_its_own_ranges_on_release(self):
+        a, b = self.app.shock_a, self.app.shock_b
+        s = self.engine.settings
+        a.s_pmin._press(click(150))
+        a.s_pmin._up(click(150))                        # about 50%
+        self.assertAlmostEqual(s.shock_a_min_pct, 50, delta=2)
+        self.assertGreaterEqual(s.shock_a_max_pct, s.shock_a_min_pct)       # the highest end was pushed up with it
+        self.assertEqual(s.shock_limits("B"), (10, 30, 3, 5))               # channel B did not move
+        a.s_pmax._press(click(12))
+        a.s_pmax._up(click(12))                         # all the way left: 1%
+        self.assertEqual((s.shock_a_min_pct, s.shock_a_max_pct), (1, 1))
+        b.s_smin._user_set(12)                          # B's duration: a minimum of 12 s pushes the maximum along
+        b.s_smin.release(12)
+        self.assertEqual((s.shock_b_min_s, s.shock_b_max_s), (12, 12))
+        b.s_smax._user_set(20)
+        b.s_smax.release(20)
+        self.assertEqual((s.shock_b_min_s, s.shock_b_max_s), (12, 20))
+        self.assertEqual((s.shock_a_min_s, s.shock_a_max_s), (3, 5))        # A's durations did not move
+        self.refresh()
+        self.assertIn("Minimum random power: 1%", a.lbl_pmin.cget("text"))
+        self.assertIn("Maximum random power: 1%", a.lbl_pmax.cget("text"))
+        self.assertIn("Minimum random duration: 12 s", b.lbl_smin.cget("text"))
+        self.assertIn("Maximum random duration: 20 s", b.lbl_smax.cget("text"))
+        self.assertIn("1–1% for 3–5 s on channel A", a.lbl_sum.cget("text"))
+        self.assertIn("10–30% for 12–20 s on channel B", b.lbl_sum.cget("text"))
+        self.assertNotIn("s_cool", vars(a))                                 # there is no pause slider
+        for slider in (a.s_smin, a.s_smax, b.s_smin, b.s_smax):             # the durations top out at 30 seconds
+            slider._user_set(99)
+            self.assertEqual(slider.value, 30.0)
+
+    def test_the_channel_cards_follow_changes_made_elsewhere(self):
+        self.engine.configure_shock(shock_a_min_pct=33, shock_a_max_pct=66, shock_b_min_s=7, shock_b_max_s=9)
+        self.refresh()
+        self.assertEqual((self.app.shock_a.s_pmin.value, self.app.shock_a.s_pmax.value), (33.0, 66.0))
+        self.assertEqual((self.app.shock_b.s_smin.value, self.app.shock_b.s_smax.value), (7.0, 9.0))
+        self.assertEqual((self.app.shock_b.s_pmin.value, self.app.shock_b.s_pmax.value), (10.0, 30.0))
+
+    def test_the_power_labels_show_the_ceiling(self):
+        self.engine.configure(max_intensity=137)
+        self.refresh()
+        text = self.app.shock_a.lbl_pmin.cget("text")
+        self.assertIn("[ceiling 137]", text)
+        self.assertIn("= 14 of 200", text)                  # 10% of 137
+
+    # ---- the contact list
+    def test_the_contact_list_starts_with_the_standard_contact_firing_both_channels(self):
+        card = self.app.contacts
+        self.assertEqual(len(card.rows), 1)
+        row = card.rows[0]
+        self.assertEqual((row["param"].get(), row["a"].get(), row["b"].get()), ("ShockOsc/_all", True, True))
+
+    def test_adding_editing_and_removing_contacts(self):
+        card = self.app.contacts
+        s = self.engine.settings
+        card._add()
+        self.assertEqual(len(card.rows), 2)
+        card.rows[1]["param"].set("  Collar/Touch ")
+        card.rows[1]["b"].set(False)
+        card._apply()
+        self.assertEqual(s.shock_triggers, [{"param": "ShockOsc/_all", "a": True, "b": True},
+                                            {"param": "Collar/Touch", "a": True, "b": False}])
+        self.assertIn("2 contact triggers applied", self.app.msg.cget("text"))
+        card._add()                                      # a row with no name is left out
+        card._apply()
+        self.assertEqual(len(s.shock_triggers), 2)
+        card._remove(card.rows[2])
+        card._remove(card.rows[1])
+        self.assertEqual(s.shock_triggers, [{"param": "ShockOsc/_all", "a": True, "b": True}])
+        card._remove(card.rows[0])                       # none left: allowed, and the window says nothing can fire
+        self.assertEqual(s.shock_triggers, [])
+        card._apply()
+        self.assertIn("No contact set", self.app.msg.cget("text"))
+        self.assertEqual(self.app.msg.cget("fg").lower(), gui.RED.lower())
+
+    def test_a_contact_has_to_fire_at_least_one_channel(self):
+        card = self.app.contacts
+        row = card.rows[0]
+        row["a"].set(False)
+        card._on_check(row, "a")                         # B is still on: fine
+        self.assertEqual(self.engine.settings.shock_triggers, [{"param": "ShockOsc/_all", "a": False, "b": True}])
+        row["b"].set(False)
+        card._on_check(row, "b")                         # nothing left: refused and put back
+        self.assertTrue(row["b"].get())
+        self.assertIn("at least one channel", self.app.msg.cget("text"))
+        self.assertEqual(self.engine.settings.shock_triggers, [{"param": "ShockOsc/_all", "a": False, "b": True}])
+
+    def test_a_repeated_contact_is_refused(self):
+        card = self.app.contacts
+        card._add()
+        card.rows[1]["param"].set("shockosc/_ALL")       # the same contact in other letters
+        card._apply()
+        self.assertIn("listed twice", self.app.msg.cget("text"))
+        self.assertEqual(len(self.engine.settings.shock_triggers), 1)
+
+    def test_the_number_of_contacts_is_limited(self):
+        from coyote_vrc.settings import MAX_SHOCK_TRIGGERS
+        card = self.app.contacts
+        for _ in range(MAX_SHOCK_TRIGGERS + 3):
+            card._add()
+        self.assertEqual(len(card.rows), MAX_SHOCK_TRIGGERS)
+        self.assertEqual(card.btn_add.cget("state"), "disabled")
+        self.assertIn("At most", self.app.msg.cget("text"))
+        card._remove(card.rows[-1])
+        self.assertEqual(card.btn_add.cget("state"), "normal")
+
+    def test_the_rows_follow_changes_from_elsewhere_but_not_what_is_being_typed(self):
+        card = self.app.contacts
+        self.engine.configure_shock(shock_triggers=[{"param": "X/Y", "a": False, "b": True}])
+        self.refresh()
+        self.assertEqual([(r["param"].get(), r["a"].get(), r["b"].get()) for r in card.rows], [("X/Y", False, True)])
+        card.rows[0]["param"].set("Typing/Now")          # typed but not applied yet
+        self.refresh()
+        self.assertEqual(card.rows[0]["param"].get(), "Typing/Now")
+
+    def test_enter_and_the_check_boxes_apply_at_once(self):
+        card = self.app.contacts
+        card.rows[0]["param"].set("Renamed/Contact")
+        card._apply(quiet=True)
+        self.assertEqual(self.engine.settings.shock_triggers[0]["param"], "Renamed/Contact")
+        self.assertEqual(self.app.msg.cget("text"), "")  # quiet: no message for every keystroke
+
+    # ---- the chatbox card
+    def test_chatbox_switch(self):
+        card = self.app.chat
         card.v_chat.set(False)
         card._on_chat()
         self.assertFalse(self.engine.settings.chatbox_enabled)
         self.refresh()
         self.assertFalse(card.v_chat.get())
+        self.engine.configure_shock(chatbox_enabled=True)       # changed from elsewhere: the box follows
+        self.refresh()
+        self.assertTrue(card.v_chat.get())
 
-    def test_shock_fields_validation_and_apply(self):
-        card = self.app.shock
+    def test_chatbox_fields_validation_and_apply(self):
+        card = self.app.chat
         old = self.engine.settings.chatbox_port
         card.vars["chatbox_port"].set("abc")
         card._apply()
@@ -609,111 +915,12 @@ class GuiSmoke(unittest.TestCase):
         self.assertEqual(self.engine.settings.chatbox_clear_s, 2)          # one second is too fast for VRChat: 2
         self.assertEqual(card.vars["chatbox_clear_s"].get(), "2")
         card.vars["chatbox_clear_s"].set("0")
-        card.vars["osc_param_shock"].set("  Collar/Touch ")
-        card.vars["chatbox_text"].set("Zap {percent}%")
+        card.vars["chatbox_text"].set("Zap {a_percent}% {b_percent}%")
         card._apply()
         s = self.engine.settings
-        self.assertEqual((s.chatbox_port, s.osc_param_shock, s.chatbox_text), (9100, "Collar/Touch", "Zap {percent}%"))
+        self.assertEqual((s.chatbox_port, s.chatbox_text), (9100, "Zap {a_percent}% {b_percent}%"))
         self.assertEqual(s.chatbox_clear_s, 0)
-        self.assertEqual(card.vars["osc_param_shock"].get(), "Collar/Touch")
-
-    def test_shock_state_text_follows_the_trigger(self):
-        card = self.app.shock
-        self.engine.connect = lambda *a, **k: None      # the real Bluetooth is not under test here
-        self.engine.settings.chatbox_enabled = False    # this test is about the window, not the chatbox
-        self.refresh()
-        self.assertIn("Off", card.lbl_state.cget("text"))
-        self.assertIn("not touched since the program started", card.lbl_touch.cget("text"))
-        self.engine.set_shock_enabled(True)
-        self.refresh()
-        self.assertIn("not connected", card.lbl_state.cget("text"))
-        self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [True])       # a touch that cannot fire
-        self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [False])
-        self.refresh()
-        self.assertIn("Ignored a touch", card.lbl_ignored.cget("text"))
-        self.assertIn("the Coyote is not connected", card.lbl_ignored.cget("text"))
-        self.assertIn("a touch was ignored", self.app.msg.cget("text"))        # also shown at the bottom of the window
-        self.assertEqual(self.app.msg.cget("fg").lower(), gui.RED.lower())
-        self.assertIn("last touched", card.lbl_touch.cget("text"))
-        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: chatbox only")
-        self.engine.link.state = "connected"
-        self.refresh()
-        self.assertIn("waiting for a touch on ShockOsc/_all", card.lbl_state.cget("text"))
-        self.assertEqual(card.lbl_state.cget("fg").lower(), gui.GREEN.lower())
-        self.assertIn("none yet", card.lbl_last.cget("text"))
-        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: armed")
-        self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [True])
-        self.refresh()
-        self.assertIn("SHOCK", card.lbl_state.cget("text"))
-        self.assertEqual(card.lbl_state.cget("fg").lower(), gui.RED.lower())
-        self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock: ACTIVE")
-        self.assertIn("%", card.lbl_last.cget("text"))
-        self.engine.emergency_stop("gui")
-        self.refresh()
-        self.assertIn("emergency stop", card.lbl_state.cget("text"))
-
-    def test_a_touch_without_a_coyote_is_shown_as_chatbox_only(self):
-        from coyote_vrc import osc as oscmod
-        card = self.app.shock
-        self.engine.connect = lambda *a, **k: None      # the real Bluetooth is not under test here
-        vrc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        vrc.bind(("127.0.0.1", 0))
-        vrc.settimeout(2.0)
-        try:
-            self.engine.settings.chatbox_port = vrc.getsockname()[1]
-            self.engine.set_shock_enabled(True)
-            self.refresh()
-            self.assertIn("only shows the chatbox message", card.lbl_state.cget("text"))
-            self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: chatbox only")
-            self.assertEqual(self.app.chip_shock.dot.cget("fg").lower(), gui.GOLD.lower())   # not the red of NOT READY
-            self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [True])
-            self.engine._on_osc("/avatar/parameters/ShockOsc/_all", [False])
-            data, _ = vrc.recvfrom(4096)
-            self.assertRegex(oscmod.parse_message(data)[1][0], r"^Shock \d+% for 3 s$")
-            self.refresh()
-            self.assertIn("shown in the chatbox", card.lbl_ignored.cget("text"))
-            self.assertIn("no shock", card.lbl_ignored.cget("text"))
-            self.assertNotIn("Ignored", card.lbl_ignored.cget("text"))
-            self.assertEqual(card.lbl_ignored.cget("fg").lower(), gui.GOLD.lower())
-            self.assertIn("chatbox only", self.app.msg.cget("text"))
-            self.assertEqual(self.app.msg.cget("fg").lower(), gui.GOLD.lower())
-            self.assertFalse(self.engine.control.shock_active())
-            self.assertIn("chatbox only", card.lbl_last.cget("text"))
-        finally:
-            vrc.close()
-
-    def test_shock_test_buttons(self):
-        from coyote_vrc import osc as oscmod
-        card = self.app.shock
-        self.engine.connect = lambda *a, **k: None      # the real Bluetooth is not under test here
-        vrc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        vrc.bind(("127.0.0.1", 0))
-        vrc.settimeout(2.0)
-        try:
-            self.engine.settings.chatbox_port = vrc.getsockname()[1]
-            card._test_chatbox()
-            data, _ = vrc.recvfrom(4096)
-            self.assertEqual(oscmod.parse_message(data)[1][0], "Shock 20% for 3 s (test)")   # the default range is 10..30
-            self.assertIn("Test message sent", self.app.msg.cget("text"))
-            card._test_shock()
-            self.assertIn("No shock: the trigger is off", self.app.msg.cget("text"))
-            self.engine.set_shock_enabled(True)
-            self.engine.shock._last_send = -1e9    # a real VRChat drops a message that follows within 1.6 s; skip that wait
-            card._test_shock()
-            self.assertIn("not connected", self.app.msg.cget("text"))
-            self.assertIn("only shown in the chatbox", self.app.msg.cget("text"))     # no Coyote: the message, not a shock
-            self.assertFalse(self.engine.control.shock_active())
-            data, _ = vrc.recvfrom(4096)
-            self.assertRegex(oscmod.parse_message(data)[1][0], r"^Shock \d+% for 3 s$")
-            self.engine.link.state = "connected"
-            self.engine.shock._last_send = -1e9    # a real VRChat drops a message that follows within 1.6 s; skip that wait
-            card._test_shock()
-            self.assertIn("Test shock:", self.app.msg.cget("text"))
-            self.assertTrue(self.engine.control.shock_active())
-            data, _ = vrc.recvfrom(4096)
-            self.assertRegex(oscmod.parse_message(data)[1][0], r"^Shock \d+% for 3 s$")
-        finally:
-            vrc.close()
+        self.assertNotIn("osc_param_shock", card.vars)                      # the contacts live in their own card
 
     # ---- Bluetooth (simulado)
     def test_scan_connect_and_status(self):

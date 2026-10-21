@@ -1,14 +1,16 @@
-"""Shock trigger: someone touches the avatar's ShockOSC contact -> a timed shock at a random power.
+"""Shock trigger: someone touches a contact on the avatar -> timed shocks, each channel with its own random power and duration.
 
-The avatar has a contact receiver whose parameter is "ShockOsc/_all" (a bool that is true while the contact is touched; the
-name comes from the ShockOSC / OpenShock avatar prefabs). VRChat sends it over OSC like any other avatar parameter. When it
-turns on, this module draws a random power between the two limits the user set, asks the controller to hold the chosen
-channels at that level for N seconds, and says the percentage in the VRChat chatbox (and clears the chatbox again a few
-seconds later).
+The avatar has contact receivers whose parameters ("ShockOsc/_all" by default; more can be added) are bools that are true
+while the contact is touched; the default name comes from the ShockOSC / OpenShock avatar prefabs. VRChat sends them over OSC
+like any other avatar parameter. Every trigger fires the channels it is set for (the default one fires both). When one turns
+on, this module draws, for each of its channels, a random power and a random duration between the limits the user set for
+that channel, asks the controller to hold the channel at that level for that long, and says the result in the VRChat chatbox
+(and clears the chatbox again a few seconds later).
 
 Safety (the device delivers shocks, and here OTHER PLAYERS pull the trigger):
   * it is off every time the program starts and has to be switched on in the window;
-  * one shock per touch: a contact that stays on does not repeat, and a touch while a shock is running is ignored;
+  * one shock per touch: a contact that stays on does not repeat, and a touch while a shock is running on one of its channels
+    is ignored;
   * the power is a percentage of the intensity ceiling, and the controller applies the ceiling, the rise limit and the
     latched emergency stop exactly as for every other source (see control.py: a shock is only a temporary MINIMUM level);
   * a shock is only ever delivered with the Coyote connected and the emergency stop not active. With the Coyote NOT
@@ -31,11 +33,36 @@ from .osc import CHATBOX_MAX_CHARS, OscSender
 from .settings import Settings
 
 CHATBOX_MIN_INTERVAL_S = 1.6   # VRChat drops chatbox messages that arrive faster than about this (any message, also a clear)
+CHANNELS = "AB"
 
 
-def render_text(template: str, percent: int, seconds: int) -> str:
-    """Fills {percent} and {seconds} in the chatbox template (plain replacement: a stray brace cannot break it)."""
-    text = str(template).replace("{percent}", str(int(percent))).replace("{seconds}", str(int(seconds)))
+def describe(plan: dict) -> str:
+    """{"A": (37, 5), "B": (20, 3)} -> "A 37% for 5 s, B 20% for 3 s" (percent, seconds per channel)."""
+    return ", ".join(f"{ch} {int(plan[ch][0])}% for {int(plan[ch][1])} s" for ch in CHANNELS if ch in plan)
+
+
+def render_text(template: str, plan: dict) -> str:
+    """Fills the chatbox template from {"A": (percent, seconds), "B": (...)} (only the channels that fire). Plain replacement:
+    a stray brace cannot break it.
+
+      {shock}                         A 37% for 5 s, B 20% for 3 s
+      {percent} / {seconds}           the highest power / the longest duration of the channels that fire
+      {a_percent} {a_seconds}         one channel's numbers (0 when that channel does not fire)
+      {b_percent} {b_seconds}
+    """
+    values = {"{shock}": describe(plan)}
+    if plan:
+        values["{percent}"] = str(max(int(p) for p, _ in plan.values()))
+        values["{seconds}"] = str(max(int(s) for _, s in plan.values()))
+    else:
+        values["{percent}"] = values["{seconds}"] = "0"
+    for ch in CHANNELS:
+        percent, seconds = plan.get(ch, (0, 0))
+        values["{%s_percent}" % ch.lower()] = str(int(percent))
+        values["{%s_seconds}" % ch.lower()] = str(int(seconds))
+    text = str(template)
+    for token, value in values.items():
+        text = text.replace(token, value)
     return " ".join(text.split())[:CHATBOX_MAX_CHARS]
 
 
@@ -58,34 +85,63 @@ class ShockTrigger:
         self._clock = clock
         self._schedule = schedule
         self._lock = threading.Lock()
-        self._prev_on = False
+        self._prev_on: dict = {}         # contact name (lower case) -> was it on at the last value
         self._last_send = -1e9           # when the last chatbox message of ANY kind went out
         self._chat_gen = 0               # bumped for every message we put on screen: a stale clear must do nothing
         self._chat_visible = False       # our message is (as far as we know) still on screen
         self._clear_handle = None
-        self._last_touch: Optional[float] = None      # when the contact last turned on (whatever happened next)
+        self._last_touch: Optional[float] = None      # when a contact last turned on (whatever happened next)
+        self._last_touch_param = ""
         self._ignored: Optional[tuple] = None         # (time, reason) of the last touch that did not fire
         self._ignored_n = 0
-        self._announced: Optional[tuple] = None       # (time, "37% for 5 s") of the last touch that was only announced
+        self._announced: Optional[tuple] = None       # (time, "A 37% for 5 s, ...") of the last touch only announced
         self._announced_n = 0
-        self._virtual_until = 0.0                     # an announced-only "shock" counts as running until then
+        self._virtual_until = {"A": 0.0, "B": 0.0}    # an announced-only "shock" counts as running on a channel until then
         self.last = ""   # description of the last shock (shown in the window)
 
     # ------------------------------------------------------------------ from VRChat
-    def on_param(self, on: bool) -> Optional[dict]:
-        """Called with every value of the contact parameter. Only a change from off to on counts as a touch, so a contact
-        that stays on (or that is already on when the trigger is switched on) never fires by itself."""
+    def _trigger_for(self, name: str) -> Optional[dict]:
+        low = str(name).lower()
+        for trigger in self.settings.shock_triggers:
+            if trigger["param"].lower() == low:
+                return trigger
+        return None
+
+    def handles(self, name: str) -> bool:
+        """True when `name` (an avatar parameter) is one of the contacts."""
+        return self._trigger_for(name) is not None
+
+    def on_param(self, name: str, on: bool) -> Optional[dict]:
+        """Called with every value of a contact parameter. Only a change from off to on counts as a touch, so a contact that
+        stays on (or that is already on when the trigger is switched on) never fires by itself."""
+        trigger = self._trigger_for(name)
+        if trigger is None:
+            return None
+        key = trigger["param"].lower()
         with self._lock:
-            rising = bool(on) and not self._prev_on
-            self._prev_on = bool(on)
+            rising = bool(on) and not self._prev_on.get(key, False)
+            self._prev_on[key] = bool(on)
             if rising:
                 self._last_touch = self._clock()
-        return self.fire("osc") if rising else None
+                self._last_touch_param = trigger["param"]
+        if not rising:
+            return None
+        return self.fire("osc", ("A" if trigger["a"] else "") + ("B" if trigger["b"] else ""))
 
     # ------------------------------------------------------------------ one touch
-    def fire(self, source: str = "osc") -> dict:
-        """Draws a power and starts the shock, or says why not. Returns {"fired": True, ...} or {"fired": False, "reason"}."""
+    def _draw(self, chans: str) -> dict:
+        """{"A": (percent, seconds), ...}: a random power and a random duration inside each channel's limits."""
+        plan = {}
+        for ch in chans:
+            lo, hi, slo, shi = self.settings.shock_limits(ch)
+            plan[ch] = (self._rng.randint(lo, hi), self._rng.randint(slo, shi))
+        return plan
+
+    def fire(self, source: str = "osc", channels: str = "AB") -> dict:
+        """Draws the powers and durations and starts the shocks on `channels`, or says why not.
+        Returns {"fired": True, ...} or {"fired": False, "reason": ...}."""
         s, ctl = self.settings, self.control
+        chans = "".join(c for c in CHANNELS if c in str(channels).upper()) or CHANNELS
 
         def refuse(reason: str) -> dict:
             ctl.log(f"Shock trigger: touch ignored — {reason}")
@@ -99,57 +155,62 @@ class ShockTrigger:
         if ctl.estopped:
             return refuse("the emergency stop is active")
         if not self._is_connected():
-            return self._announce_only(refuse)
-        if ctl.shock_active():
-            return refuse("a shock is already running")
+            return self._announce_only(chans, refuse)
+        busy = [c for c in chans if ctl.shock_active(c)]
+        if busy:
+            return refuse("a shock is already running on " + "+".join(busy))
         cap = ctl.cap("gui")
         if cap <= 0:
             return refuse("the intensity ceiling is 0")
 
-        percent = self._rng.randint(s.shock_min_pct, s.shock_max_pct)
-        level = max(1, int(round(percent * cap / 100.0)))
+        plan = self._draw(chans)
+        levels = {c: (max(1, int(round(plan[c][0] * cap / 100.0))), plan[c][1]) for c in chans}
         try:
-            res = ctl.start_shock(s.shock_channels, level, s.shock_seconds, source)
+            res = ctl.start_shocks(levels, source)
         except ControlError as exc:
             return refuse(str(exc))
-        self.last = f"{percent}% ({res['applied']:.0f} of {cap}) on {res['channels']} for {res['seconds']:.0f} s"
-        ctl.log(f"Shock trigger: drew {percent}% of the ceiling")
-        self._announce(percent, int(res["seconds"]))
-        return {"fired": True, "percent": percent, "level": res["applied"], "seconds": res["seconds"],
-                "channels": res["channels"]}
+        real = {c: (plan[c][0], int(res[c]["seconds"])) for c in chans}
+        self.last = ", ".join(f"{c} {plan[c][0]}% ({res[c]['applied']:.0f} of {cap}) for {res[c]['seconds']:.0f} s"
+                              for c in chans)
+        ctl.log("Shock trigger: drew " + describe(real))
+        self._announce(real)
+        return {"fired": True, "channels": chans, "text": describe(real),
+                "shocks": {c: {"percent": plan[c][0], "level": res[c]["applied"], "seconds": res[c]["seconds"]}
+                           for c in chans}}
 
     # ------------------------------------------------------------------ chatbox
-    def _announce_only(self, refuse) -> dict:
-        """The Coyote is not connected, so nothing can be delivered. The message is shown in the chatbox anyway, as if the shock
-        had happened, and the touch counts as a running shock for `shock_seconds` (so a second touch is not announced on top)."""
-        s = self.settings
+    def _announce_only(self, chans: str, refuse) -> dict:
+        """The Coyote is not connected, so nothing can be delivered. The message is shown in the chatbox anyway, as if the
+        shock had happened, and each channel counts as shocking for its drawn duration (so a second touch on the same
+        channels is not announced on top of it)."""
         now = self._clock()
         with self._lock:
-            busy = now < self._virtual_until
+            busy = any(now < self._virtual_until[c] for c in chans)
         if busy:
             return refuse("the Coyote is not connected, and the message of the previous touch is still running")
-        percent = self._rng.randint(s.shock_min_pct, s.shock_max_pct)
-        seconds = int(s.shock_seconds)
-        if not self._announce(percent, seconds):
+        plan = self._draw(chans)
+        if not self._announce(plan):
             return refuse("the Coyote is not connected, and no chatbox message was sent "
                           "(the message is off or empty, or came too soon after another)")
+        text = describe(plan)
         with self._lock:
-            self._virtual_until = now + seconds
-            self._announced = (now, f"{percent}% for {seconds} s")
+            for c in chans:
+                self._virtual_until[c] = now + plan[c][1]
+            self._announced = (now, text)
             self._announced_n += 1
-        self.last = f"{percent}% for {seconds} s: shown in the chatbox only, the Coyote is not connected"
-        self.control.log(f"Shock trigger: the Coyote is not connected, so {percent}% for {seconds} s was only announced "
-                         "in the chatbox; no shock was delivered")
-        return {"fired": False, "announced": True, "percent": percent, "seconds": float(seconds),
-                "channels": s.shock_channels,
+        self.last = f"{text}: shown in the chatbox only, the Coyote is not connected"
+        self.control.log(f"Shock trigger: the Coyote is not connected, so {text} was only announced in the chatbox; "
+                         "no shock was delivered")
+        return {"fired": False, "announced": True, "channels": chans, "text": text,
+                "shocks": {c: {"percent": plan[c][0], "seconds": float(plan[c][1])} for c in chans},
                 "reason": "the Coyote is not connected: the message was shown in the chatbox, no shock was delivered"}
 
-    def _announce(self, percent: int, seconds: int) -> bool:
+    def _announce(self, plan: dict) -> bool:
         """Puts the message in the chatbox. True when a message really went out."""
         s = self.settings
         if not s.chatbox_enabled:
             return False
-        text = render_text(s.chatbox_text, percent, seconds)
+        text = render_text(s.chatbox_text, plan)
         if not text:
             return False
         with self._lock:
@@ -224,7 +285,7 @@ class ShockTrigger:
             self._cancel_clear_locked()
             self._chat_gen += 1
             self._chat_visible = False
-            self._virtual_until = 0.0
+            self._virtual_until = {"A": 0.0, "B": 0.0}
         if visible:
             self._send_empty()
 
@@ -234,10 +295,12 @@ class ShockTrigger:
         now = self._clock()
         with self._lock:
             touch_age = None if self._last_touch is None else round(now - self._last_touch, 1)
+            touch_param = self._last_touch_param
             ignored, ignored_n = self._ignored, self._ignored_n
             announced, announced_n = self._announced, self._announced_n
         return {
-            "touch_age_s": touch_age,                      # None = the contact has not been touched since the program started
+            "touch_age_s": touch_age,                      # None = no contact has been touched since the program started
+            "touch_param": touch_param,                    # which contact it was
             "ignored_reason": ignored[1] if ignored else "",
             "ignored_age_s": None if ignored is None else round(now - ignored[0], 1),
             "ignored_count": ignored_n,
@@ -247,6 +310,7 @@ class ShockTrigger:
             "enabled": self.settings.shock_enabled,
             "active": snap["active"],
             "remaining_s": snap["remaining_s"],
+            "remaining": snap["remaining"],
             "level": snap["level"],
             "connected": bool(self._is_connected()),
             "estopped": self.control.estopped,

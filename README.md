@@ -48,15 +48,17 @@ an intensity ceiling, a latched emergency stop, and an optional watchdog. Detail
 - Direct Bluetooth LE connection to the Coyote 3.0 (V3 protocol), 100 ms command loop, automatic reconnection.
 - Receives VRChat OSC on UDP port 9001: intensity per channel, one frequency for both channels, and an emergency stop.
 - Manual control window: per-channel sliders, frequency, pulse width, 8 waveform patterns.
-- **Shock trigger** (optional, off by default): a touch on the avatar's `ShockOsc/_all` contact fires one timed shock at a
-  random power you choose (a lowest and a highest percentage, 1 to 30 s), and the power is shown in the VRChat chatbox.
+- **Shock trigger** (optional, off by default): a touch on a contact of your avatar (`ShockOsc/_all` by default, and you can
+  add more) fires timed shocks. **Each channel has its own random power and its own random duration** (up to 30 s), and the
+  numbers are shown in the VRChat chatbox.
+- A window with **three tabs**: *Coyote settings*, *Shock contact* and *Extras*.
 - Safety layer: intensity ceiling, maximum rise speed, latched emergency stop, OSC watchdog, zero on (re)connect.
 - Optional AI control through a localhost-only, token-protected API and an MCP server (Claude Code / Claude Desktop),
   with its own lower ceiling.
 - An optional **in-game control panel for your avatar** (sliders, buttons, frequency; a Unity package that installs with
   Modular Avatar). It is a separate piece: see [unity/README.md](unity/README.md).
 - **One file to run**: `CoyoteVRChat.exe` (no Python needed), with its own logo. See [Install](#1-install).
-- 271 automated tests (protocol, Bluetooth with a simulated Coyote, OSC, API, MCP, interface logic, the shock trigger,
+- 298 automated tests (protocol, Bluetooth with a simulated Coyote, OSC, API, MCP, interface logic, the shock trigger,
   the packaging, and checks on the Unity package that do not need Unity).
 
 **Tested on:** Windows 11, a real Coyote 3.0, and VRChat on PC. The automated tests use a simulated Coyote. Other
@@ -130,17 +132,22 @@ itself, see [AI control](#6-ai-control-claude-code--claude-desktop)).
 
 ## 3. The window
 
-| Panel | What it is for |
-|---|---|
-| Header | Bluetooth, OSC and AI status; STOP ALL button |
-| Bluetooth connection | Scan, connect, disconnect, battery, errors, automatic reconnection |
-| Channel A / Channel B | Intensity 0–200 (slider, −10/−1/+1/+10, Zero), frequency 1–100 Hz, pulse width 0–100. The ▼ on the slider shows the value actually going out during the ramp-up; the red mark is the ceiling |
-| VRChat OSC | Port, address and parameter names; shows whether packets are arriving |
-| Patterns | Constant, Breathing, Pulses, Heartbeat, Ramp, Frequency sweep, Random, Staccato; speed, channels and A/B alternation |
-| Safety limits | Intensity ceiling, maximum rise speed, OSC watchdog |
-| Shock trigger | Switches the ShockOSC-contact trigger on/off; lowest and highest random power, duration (up to 30 s), channels, chatbox message and tests |
-| AI | Turns AI control on/off, AI ceiling, command to register in Claude Code |
-| Log | Everything that happened (connections, stops, AI actions…) |
+The header (Bluetooth, OSC, AI and shock-trigger status, and the **STOP ALL** button) is always visible. Under it there are
+three tabs:
+
+| Tab | Panel | What it is for |
+|---|---|---|
+| **Coyote settings** | Bluetooth connection | Scan, connect, disconnect, battery, errors, automatic reconnection |
+| | Channel A / Channel B | Intensity 0–200 (slider, −10/−1/+1/+10, Zero), frequency 1–100 Hz, pulse width 0–100. The ▼ on the slider shows the value actually going out during the ramp-up; the red mark is the ceiling |
+| | Patterns | Constant, Breathing, Pulses, Heartbeat, Ramp, Frequency sweep, Random, Staccato; speed, channels and A/B alternation |
+| | Safety limits | Intensity ceiling, maximum rise speed, OSC watchdog |
+| **Shock contact** | Shock contact trigger | The on/off switch (always starts off), what the trigger is doing, the last touch, and test buttons (A+B, A, B) |
+| | Contact triggers | The contacts (avatar parameters) that fire a shock and which channels each one fires; add as many as you like |
+| | Channel A shock / Channel B shock | For each channel: a lowest and a highest random power, and a lowest and a highest random duration (up to 30 s) |
+| | VRChat chatbox message | The message sent to the chatbox when a shock starts, how long it stays, the port, and a test button |
+| **Extras** | VRChat OSC | Port, address and parameter names; shows whether packets are arriving |
+| | AI (Claude Code / MCP) | Turns AI control on/off, AI ceiling, command to register in Claude Code |
+| | Log | Everything that happened (connections, stops, AI actions…) |
 
 Patterns change the **waveform** (Hz and pulse width). The intensity is still the one from the sliders, VRChat or the
 AI.
@@ -160,7 +167,7 @@ AI.
 | `CoyoteStop` | bool | `true` triggers the same emergency stop as the window (stays latched until you re-enable it) |
 | `CoyoteFreq` | **int**, Hz (1–100) | frequency of **both** channels at once. Only integers count: `0` and floats are ignored (a parameter that is not initialized yet arrives as 0 and must not drop the frequency to 1 Hz). Values above 100 become 100 |
 
-| `ShockOsc/_all` | bool | a touch on the avatar's contact: fires **one** shock if the [shock trigger](#shock-trigger-a-touch-on-the-shockosc-contact) is switched on (the name is compared ignoring upper/lower case) |
+| `ShockOsc/_all` | bool | a touch on the avatar's contact: fires shocks on **both channels** if the [shock trigger](#shock-trigger-a-touch-on-the-shockosc-contact) is switched on (the name is compared ignoring upper/lower case; more contacts can be added in the window) |
 
 The names can be changed in the window. Any VRChat packet counts as "I am alive": if you enable the **watchdog**
 (Safety limits), the channels commanded by VRChat go back to zero when it stays silent for X seconds (for example,
@@ -172,44 +179,55 @@ other OSC tool, or use an OSC router.
 ### Shock trigger: a touch on the ShockOSC contact
 
 Avatars set up for ShockOSC (OpenShock) have a contact receiver whose parameter is `ShockOsc/_all`, a bool that is on while
-the contact is touched. This program can listen to it: **when someone touches the contact, it fires one shock at a random
-power**, for a few seconds, on the channels you pick, and shows the power in the VRChat chatbox. It is the **Shock trigger**
-card in the window.
+the contact is touched. This program can listen to it: **when someone touches the contact, it fires a shock on each of the
+channels set for that contact**, each with its own random power and duration, and shows the numbers in the VRChat chatbox.
+It is the **Shock contact** tab of the window.
 
-- **Random power:** a lowest and a highest slider (1 to 100 %). Every touch draws a new whole-number percentage between
-  them. The percentage is of the *intensity ceiling*, the same scale as `CoyoteA`: with the default ceiling of 200, 30 % is 60.
-- **Duration:** 1 to 30 seconds. **Channels:** A, B or both.
-- **Chatbox:** when a shock starts, the program sends `Shock 37% for 5 s`: the power drawn and how long it lasts (the text is
-  editable; `{percent}` and `{seconds}` are replaced, and the default is `Shock {percent}% for {seconds} s`) to VRChat's OSC input, which listens on port **9000** (OSC has to be enabled in VRChat; the port is a field in the
-  card). VRChat drops chatbox messages that come in too fast, so at most one is sent every 1.6 s. **Test chatbox** sends a
-  test message without any shock.
+- **Contacts:** the *Contact triggers* card lists the contacts that fire a shock, and for each one the channels it fires (A, B
+  or both). The standard `ShockOsc/_all` is there by default and **fires both channels**. Press **Add trigger** to listen to
+  more contacts of your avatar (for example one that only fires channel A); the names are bool avatar parameters and are
+  compared ignoring upper/lower case. A contact has to fire at least one channel, a name cannot be listed twice, and there
+  can be up to 8. With no contact in the list nothing can fire.
+- **Random power, per channel:** the *Channel A shock* and *Channel B shock* cards each have a lowest and a highest power
+  slider (1 to 100 %). Every touch draws a new whole-number percentage between them, separately for each channel. The
+  percentage is of the *intensity ceiling*, the same scale as `CoyoteA`: with the default ceiling of 200, 30 % is 60.
+- **Random duration, per channel:** the same cards have a shortest and a longest duration (1 to 30 seconds); a new duration
+  is drawn for each channel at every touch. So a touch can give, for example, channel A 20 % for 4 s and channel B 60 % for 9 s.
+- **Chatbox:** when a shock starts, the program sends the numbers of the channels that fire, for example
+  `Shock A 37% for 5 s, B 20% for 3 s`, to VRChat's OSC input, which listens on port **9000** (OSC has to be enabled in VRChat;
+  the port is a field in the *VRChat chatbox message* card). The text is editable: `{shock}` becomes
+  `A 37% for 5 s, B 20% for 3 s` (only the channels that fire), `{percent}` and `{seconds}` are the highest power and the
+  longest duration, and `{a_percent}`, `{a_seconds}`, `{b_percent}`, `{b_seconds}` are one channel's numbers (0 when that
+  channel does not fire). The default is `Shock {shock}`. VRChat drops chatbox messages that come in too fast, so at most
+  one is sent every 1.6 s. **Test chatbox** sends a test message without any shock.
 - **The message goes away by itself** 3 seconds later (a field in the card; 0 = leave it to VRChat). It is also removed at
   once when you press STOP ALL, switch the trigger off, or close the program. VRChat's documentation does not describe how to
   clear a message over OSC: what chatbox tools do is send an *empty* message, and that is what this program does. It is not
   guaranteed on every VRChat version; if it does not clear for you, the message disappears after VRChat's own "chatbox
   display duration" setting.
-- **One shock per touch.** A contact that stays on does not repeat: it has to turn off and on again. A touch while a shock is
-  running is ignored. There is no pause after a shock: as soon as it ends, the next touch can fire a new one.
+- **One shock per touch.** A contact that stays on does not repeat: it has to turn off and on again. A touch is ignored while
+  a shock is running on one of the channels that contact fires (a contact for channel B still works while channel A is
+  shocking). There is no pause after a shock: as soon as it ends, the next touch can fire a new one.
 - **A shock is only delivered** when the trigger is ticked, the Coyote is connected and the emergency stop is not active.
   With the emergency stop active a touch does nothing and nothing is announced (the chip says **Shock trigger: NOT READY** in
   red). Ticking the trigger also tries to connect the Coyote if it is not connected.
 - **With the Coyote not connected, a touch still shows the message in the chatbox**: the power and the duration are drawn and
   announced as usual (`Shock 37% for 5 s`) and the message is cleared as usual, but **no shock is delivered**. The chip at the
   top says **Shock trigger: chatbox only** in gold, and the card and the bottom of the window say that the touch only reached
-  the chatbox. For those seconds the program behaves as if a shock were running, so a second touch is not announced on top
-  of it. If the chatbox message is switched off, empty or would come too soon after another, such a touch is ignored. Keep
+  the chatbox. For those seconds the program behaves as if a shock were running on those channels, so a second touch is not
+  announced on top of it. If the chatbox message is switched off, empty or would come too soon after another, such a touch is ignored. Keep
   in mind that the people around you see a message for a shock that was not delivered.
 - **A touch that is ignored** is shown in red at the bottom of the window and in the card (with the reason and how long ago),
   and the card also shows when the contact was last touched, so you can tell "VRChat never sent the touch" from "the program
   ignored it".
-- **It is a floor, not a replacement.** During the shock each chosen channel is held at *at least* the drawn power: what the
+- **It is a floor, not a replacement.** During the shock each channel is held at *at least* its drawn power: what the
   window, a panel or the AI ask for is never lowered, and afterwards the channel goes back to it. The ceiling and the rise
   limit still apply (with the default rise limit of 100 per second, a 100 % shock takes 2 s to reach full power; set the limit
   to unlimited if you want instant shocks), and **STOP ALL** cancels it at once.
 - **It starts off every time**, and ticking it asks for confirmation, because other players pull this trigger, not you.
   Switching it off also cancels a shock that is running.
-- The parameter name can be changed in the card (some avatars spell it `ShockOsc/_All`; the comparison ignores upper/lower
-  case).
+- Contact names can be changed in the *Contact triggers* card (some avatars spell the standard one `ShockOsc/_All`; the
+  comparison ignores upper/lower case). Changes to the contact list, the channel cards and the chatbox card are saved at once.
 
 ### Testing without VRChat
 
@@ -306,8 +324,8 @@ If you want to use the API directly (other tools): `GET /status`, `GET /patterns
 | OSC "receiving" never shows up | Is OSC enabled in VRChat? Is port 9001 free? Does the avatar have the parameters? After adding parameters, use *Options → OSC → Reset Config* in VRChat and re-select the avatar. See [docs/AVATAR_SETUP.md](docs/AVATAR_SETUP.md) |
 | OSC shows packets but nothing changes | Only parameters named exactly `CoyoteA`/`CoyoteB`/`CoyoteFreq`/`CoyoteStop` count (names can be changed in the OSC panel). `CoyoteFreq` must be an **int** parameter |
 | Frequency never changes | `CoyoteFreq` ignores `0` and floats on purpose; send an int between 1 and 100 |
-| Touching the contact does nothing | Read the red/gold line in the *Shock trigger* card and the chip at the top: **chatbox only** (gold) means the Bluetooth chip is not *Connected*: a touch then shows the message in the chatbox but delivers no shock; **NOT READY** (red) means the emergency stop is active. The Coyote has to be on, close to the PC and not held by another app (the DG-LAB phone app, OpenShock Desktop): while another app holds it, it does not even show up in *Scan*. Then: is *Shock trigger* ticked (it starts off every time)? Is the parameter name right (`ShockOsc/_all` on your avatar)? Does the card say the contact was touched? If it says *not touched since the program started*, VRChat never sent the touch: the contact on the avatar may not accept your hand (for example, "Allow Self" off means only OTHER players can trigger it, and a small radius means the hand has to be close) |
-| The chatbox message does not appear | Is OSC enabled in VRChat? VRChat normally listens for OSC input on port 9000; if your setup changed that (an OSC router, another program holding 9000), put the right port in the card. Try *Test chatbox*. VRChat can also hide chatbox messages (check its settings) |
+| Touching the contact does nothing | Open the *Shock contact* tab, read the red/gold line in the *Shock contact trigger* card and the chip at the top: **chatbox only** (gold) means the Bluetooth chip is not *Connected*: a touch then shows the message in the chatbox but delivers no shock; **NOT READY** (red) means the emergency stop is active. The Coyote has to be on, close to the PC and not held by another app (the DG-LAB phone app, OpenShock Desktop): while another app holds it, it does not even show up in *Scan*. Then: is *Shock trigger* ticked (it starts off every time)? Is the contact name right (in the *Contact triggers* card; `ShockOsc/_all` is the standard one on your avatar) and does that contact fire the channel you expect? Does the card say the contact was touched? If it says *not touched since the program started*, VRChat never sent the touch: the contact on the avatar may not accept your hand (for example, "Allow Self" off means only OTHER players can trigger it, and a small radius means the hand has to be close) |
+| The chatbox message does not appear | Is OSC enabled in VRChat? VRChat normally listens for OSC input on port 9000; if your setup changed that (an OSC router, another program holding 9000), put the right port in the *VRChat chatbox message* card. Try *Test chatbox*. VRChat can also hide chatbox messages (check its settings) |
 | Windows says "protected your PC" / the antivirus complains about the `.exe` | The file is not code-signed. Windows: **More info → Run anyway**. Compare the SHA-256 with `SHA256SUMS.txt` from the release, or build the `.exe` yourself ([how](#building-the-exe-yourself)) |
 | The `.exe` does nothing when I double-click it | Wait a few seconds (it unpacks itself the first time). If nothing shows, open a terminal and run `CoyoteVRChat.exe --selftest` to see what is missing. Is it already open (check the tray/taskbar)? Two copies cannot both hold the OSC port |
 | "tkinter missing" | Reinstall Python with *tcl/tk and IDLE* checked (or use `--headless`) |

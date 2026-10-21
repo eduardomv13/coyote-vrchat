@@ -1,13 +1,14 @@
 """Engine: wires Controller + Bluetooth + OSC + local API together. The GUI only talks to this class."""
 from __future__ import annotations
 
+import copy
 from typing import Optional
 
 from .api import ApiServer
 from .ble import AsyncThread, BleakTransport, CoyoteLink
 from .control import ControlError, Controller
 from .osc import OscListener, OscSender
-from .settings import Settings, load_settings, save_settings
+from .settings import SHOCK_CHANNELS, Settings, load_settings, save_settings
 from .shock import ShockTrigger, render_text
 
 OSC_PREFIX = "/avatar/parameters/"
@@ -100,9 +101,10 @@ class Engine:
         return changed
 
     # ------------------------------------------------------------------ shock trigger (ShockOSC contact)
-    _SHOCK_KEYS = ("osc_param_shock", "shock_min_pct", "shock_max_pct", "shock_seconds",
-                   "shock_channels", "chatbox_enabled", "chatbox_host", "chatbox_port", "chatbox_text",
-                   "chatbox_clear_s")
+    _SHOCK_RANGE_KEYS = tuple(f"shock_{ch}_{end}_{kind}" for ch in SHOCK_CHANNELS for kind in ("pct", "s")
+                              for end in ("min", "max"))
+    _SHOCK_KEYS = _SHOCK_RANGE_KEYS + ("shock_triggers", "chatbox_enabled", "chatbox_host", "chatbox_port", "chatbox_text",
+                                       "chatbox_clear_s")
 
     def set_shock_enabled(self, on: bool) -> None:
         on = bool(on)
@@ -126,14 +128,17 @@ class Engine:
         if unknown:
             raise ControlError("unknown setting: " + ", ".join(sorted(unknown)))
         s = self.settings
-        before = {k: getattr(s, k) for k in self._SHOCK_KEYS}
+        before = copy.deepcopy({k: getattr(s, k) for k in self._SHOCK_KEYS})
         for key, value in kw.items():
-            setattr(s, key, value)
-        # moving only one end of the range past the other pushes the other end along (instead of swapping them)
-        if "shock_min_pct" in kw and "shock_max_pct" not in kw and s.shock_min_pct > s.shock_max_pct:
-            s.shock_max_pct = s.shock_min_pct
-        if "shock_max_pct" in kw and "shock_min_pct" not in kw and s.shock_max_pct < s.shock_min_pct:
-            s.shock_min_pct = s.shock_max_pct
+            setattr(s, key, copy.deepcopy(value))
+        # moving only one end of a range past the other pushes the other end along (instead of swapping them)
+        for ch in SHOCK_CHANNELS:
+            for kind in ("pct", "s"):
+                low, high = f"shock_{ch}_min_{kind}", f"shock_{ch}_max_{kind}"
+                if low in kw and high not in kw and getattr(s, low) > getattr(s, high):
+                    setattr(s, high, getattr(s, low))
+                if high in kw and low not in kw and getattr(s, high) < getattr(s, low):
+                    setattr(s, low, getattr(s, high))
         s.validate()
         changed = {k for k in self._SHOCK_KEYS if getattr(s, k) != before[k]}
         if changed:
@@ -143,14 +148,20 @@ class Engine:
     def shock_status(self) -> dict:
         return self.shock.status()
 
-    def test_shock(self) -> dict:
-        """The same as a touch on the contact (it obeys every rule: switched on, no shock running, no emergency stop; without
-        a connected Coyote it only shows the chatbox message)."""
-        return self.shock.fire("gui")
+    def test_shock(self, channels: str = "AB") -> dict:
+        """The same as a touch on a contact that fires `channels` (it obeys every rule: switched on, no shock running on those
+        channels, no emergency stop; without a connected Coyote it only shows the chatbox message)."""
+        return self.shock.fire("gui", channels)
 
     def test_chatbox(self) -> bool:
         s = self.settings
-        text = render_text(s.chatbox_text, (s.shock_min_pct + s.shock_max_pct) // 2, s.shock_seconds)
+        plan = {}
+        for ch in "AB":      # the middle of each channel's limits, for the channels some contact fires (both if none)
+            lo, hi, slo, shi = s.shock_limits(ch)
+            plan[ch] = ((lo + hi) // 2, (slo + shi) // 2)
+        used = {c for t in s.shock_triggers for c, on in (("A", t["a"]), ("B", t["b"])) if on}
+        plan = {c: v for c, v in plan.items() if c in used} or plan
+        text = render_text(s.chatbox_text, plan)
         return self.shock.show((text + " (test)")[:144])    # shown like a real one, so it is cleared like a real one
 
     # ------------------------------------------------------------------ OSC
@@ -176,8 +187,8 @@ class Engine:
                 hz = _osc_hz(args[0])
                 if hz is not None:
                     self.control.set_frequency("AB", hz, "osc")
-            elif s.osc_param_shock and name.lower() == s.osc_param_shock.lower():
-                self.shock.on_param(value >= 0.5)   # the ShockOSC contact (case-insensitive: _all / _All)
+            elif self.shock.handles(name):
+                self.shock.on_param(name, value >= 0.5)   # a shock contact (case-insensitive: _all / _All)
         except ControlError:
             pass  # emergency stop active etc.: ignore silently
 
