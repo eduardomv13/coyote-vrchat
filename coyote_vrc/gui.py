@@ -741,41 +741,11 @@ class ShockTriggerCard(Card):
                       "Whoever can touch a contact on your avatar can fire it.",
                    fg=DIM, font=(FONT, 9), wraplength=330, justify="left").pack(fill="x", pady=(4, 0))
 
-    # ---- helpers
-    def _units(self, pct):
-        cap = self.app.engine.control.cap("gui")
-        return 0 if cap <= 0 else max(1, int(round(pct * cap / 100.0)))
-
-    def _summary(self):
-        """What a touch does, in words (for the confirmation)."""
-        s = self.app.engine.settings
-        contacts = ", ".join(f"{t['param']} ({'+'.join(c for c, on in (('A', t['a']), ('B', t['b'])) if on)})"
-                             for t in s.shock_triggers) or "(no contact set)"
-        lines = [f"Contacts: {contacts}"]
-        for ch in "AB":
-            lo, hi, slo, shi = s.shock_limits(ch)
-            lines.append(f"Channel {ch}: {lo}% to {hi}% of your intensity ceiling ({self._units(lo)} to {self._units(hi)}), "
-                         f"for {slo} to {shi} s")
-        return "\n".join(lines)
-
     # ---- actions
     def _toggle(self):
+        """One click on the box switches the trigger on or off (no question: it still starts off at every start)."""
         want = bool(self.v_enabled.get())
         e = self.app.engine
-        if want:
-            ok = messagebox.askyesno(
-                "Enable the shock trigger",
-                "Whoever touches one of these contacts on your avatar will shock you.\n\n"
-                f"{self._summary()}\n\n"
-                "The ceiling, the rise limit and STOP ALL still apply. It starts off every time you open the program.\n\n"
-                "A shock needs the Coyote, so if it is not connected the program will try to connect it now. "
-                "While it is not connected, a touch only shows the message in the VRChat chatbox (no shock).\n\n"
-                "Enable?",
-                parent=self.app,
-            )
-            if not ok:
-                self.v_enabled.set(False)
-                return
         was_connected = e.link.state == "connected"
         e.set_shock_enabled(want)
         if want and not was_connected:

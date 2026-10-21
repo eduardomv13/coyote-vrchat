@@ -224,8 +224,8 @@ It is the **Shock contact** tab of the window.
   window, a panel or the AI ask for is never lowered, and afterwards the channel goes back to it. The ceiling and the rise
   limit still apply (with the default rise limit of 100 per second, a 100 % shock takes 2 s to reach full power; set the limit
   to unlimited if you want instant shocks), and **STOP ALL** cancels it at once.
-- **It starts off every time**, and ticking it asks for confirmation, because other players pull this trigger, not you.
-  Switching it off also cancels a shock that is running.
+- **It starts off every time**, because other players pull this trigger, not you. One click on the box switches it on (there
+  is no confirmation pop-up). Switching it off also cancels a shock that is running.
 - Contact names can be changed in the *Contact triggers* card (some avatars spell the standard one `ShockOsc/_All`; the
   comparison ignores upper/lower case). Changes to the contact list, the channel cards and the chatbox card are saved at once.
 
@@ -305,7 +305,7 @@ If you want to use the API directly (other tools): `GET /status`, `GET /patterns
 - Increasing is gradual (default: 100 per second; 0 → 200 in 2 s). Decreasing is immediate.
 - The emergency stop is **latched**: only the window re-enables it. It works through the button, `Esc`, the VRChat
   `CoyoteStop` parameter and the AI.
-- The shock trigger is off at every start, asks for confirmation when you switch it on, fires one shock per touch (never
+- The shock trigger is off at every start (and is switched on with one click), fires one shock per touch (never
   longer than 30 s), delivers a shock only with the Coyote connected and no emergency stop (without a connected Coyote a
   touch only shows the chatbox message), and always inside the ceiling and the rise limit.
 - The AI API only accepts connections from this same PC, with a token, and refuses web pages (a site open in the

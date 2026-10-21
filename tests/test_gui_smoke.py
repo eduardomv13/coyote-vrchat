@@ -586,29 +586,16 @@ class GuiSmoke(unittest.TestCase):
         self.assertEqual(calls, [0, 1, 2])
 
     # ---- the shock trigger card
-    def test_shock_enable_asks_for_confirmation_and_shows_in_the_header(self):
+    def test_one_click_switches_the_shock_trigger_on_and_off_without_asking(self):
         card = self.app.shock
         asked = []
         self.engine.connect = lambda *a, **k: asked.append(1)      # the real Bluetooth is not under test here
-        fake_mb.answer = False
         card.v_enabled.set(True)
-        card._toggle()
-        self.assertFalse(self.engine.settings.shock_enabled)
-        self.assertEqual(asked, [])                                # refused: nothing was connected
-        self.assertFalse(card.v_enabled.get())
-        self.assertEqual(len(fake_mb.asked), 1)
-        text = fake_mb.asked[0][1]
-        self.assertIn("ShockOsc/_all (A+B)", text)                 # the contact and the channels it fires
-        self.assertIn("Channel A: 10% to 30%", text)               # each channel's own range
-        self.assertIn("Channel B: 10% to 30%", text)
-        self.assertIn("for 3 to 5 s", text)
-        fake_mb.answer = True
-        card.v_enabled.set(True)
-        card._toggle()
+        card._toggle()                                             # the single click on the box
         self.assertTrue(self.engine.settings.shock_enabled)
+        self.assertEqual(fake_mb.asked, [])                        # no question, no pop-up
         self.assertEqual(asked, [1])                               # enabling asked for a Bluetooth connection
         self.assertIn("connecting", self.app.msg.cget("text"))
-        self.assertIn("connect it", fake_mb.asked[1][1])           # and the confirmation said it would
         self.refresh()
         self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: chatbox only")   # not connected yet
         self.engine.link.state = "connected"
@@ -617,22 +604,19 @@ class GuiSmoke(unittest.TestCase):
         card.v_enabled.set(False)
         card._toggle()
         self.assertFalse(self.engine.settings.shock_enabled)
-        self.assertEqual(len(fake_mb.asked), 2)       # switching it off does not ask
+        self.assertEqual(fake_mb.asked, [])
         self.refresh()
         self.assertEqual(self.app.chip_shock.text.cget("text"), "Shock trigger: off")
 
-    def test_the_confirmation_lists_every_contact_with_its_channels(self):
-        self.engine.configure_shock(shock_triggers=[{"param": "ShockOsc/_all", "a": True, "b": True},
-                                                    {"param": "Collar/Touch", "a": True, "b": False}])
-        self.engine.configure_shock(shock_b_min_pct=5, shock_b_max_pct=9, shock_b_min_s=1, shock_b_max_s=2)
-        self.engine.connect = lambda *a, **k: None
+    def test_the_shock_trigger_still_starts_off_at_every_start(self):
         card = self.app.shock
+        self.engine.connect = lambda *a, **k: None
         card.v_enabled.set(True)
         card._toggle()
-        text = fake_mb.asked[0][1]
-        self.assertIn("ShockOsc/_all (A+B), Collar/Touch (A)", text)
-        self.assertIn("Channel B: 5% to 9%", text)
-        self.assertIn("for 1 to 2 s", text)
+        self.assertTrue(self.engine.settings.shock_enabled)
+        self.engine.save()
+        from coyote_vrc.settings import load_settings
+        self.assertFalse(load_settings(Path(self.tmp.name) / "settings.json").shock_enabled)
 
     def test_shock_state_text_follows_the_trigger(self):
         card = self.app.shock

@@ -9,6 +9,8 @@ Unity (`unity/`) has its own version number, listed in [its changelog](unity/io.
 - **A new window with three tabs**, like a settings dialog: *Coyote settings* (Bluetooth connection, Channel A, Channel B,
   Patterns, Safety limits), *Shock contact* (everything about the contact shock) and *Extras* (VRChat OSC, AI / Claude
   Code MCP, Log). The header with the status chips and STOP ALL stays visible on every tab.
+- **No confirmation pop-up any more**: one click on the *Enabled* box switches the shock trigger on (it still starts off at
+  every start, and still tries to connect the Coyote). The AI control box keeps its question.
 - The tab you click keeps its size (it used to shrink a little because of the theme's own padding for the selected tab); only
   its colors change.
 - **Each channel has its own shock settings**: its own lowest and highest random power and its own shortest and longest
