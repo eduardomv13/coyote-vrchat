@@ -212,8 +212,8 @@ check("drag A from 0: stays 0 inside the dead zone (stretch<=0.03)", all(v == 0 
 check("drag A from 0: moves in steps of 2", all(v % 2 == 0 for v in vals), sorted(set(vals)))
 s.p["CoyotePad/PbA_Stretch"] = 1.0; s.frames(30)
 o = s.display()
-check("drag A: plate ' 30' and the marker at 30/200 of the bar while held",
-      text_bar(o, "A") == " 30" and abs(o.get(("Container/Content/A_Handle", "m_LocalPosition.x")) - (BAR_X0 + (BAR_X1 - BAR_X0) * 30 / 200)) < 1e-6,
+check("drag A: plate ' 30' and the marker at the END of the bar (the bar is the boost, 0 ... +30) while held",
+      text_bar(o, "A") == " 30" and abs(o.get(("Container/Content/A_Handle", "m_LocalPosition.x")) - BAR_X1) < 1e-6,
       (text_bar(o, "A"), o.get(("Container/Content/A_Handle", "m_LocalPosition.x"))))
 check("drag A: CoyoteA follows (30/200) while held", abs(s.p["CoyoteA"] - 30 / 200.0) < 1e-6, s.p["CoyoteA"])
 let_go(s, "A")
@@ -567,10 +567,37 @@ for n in range(0, 201):
     expB = "%3d" % (200 - n) if (200 - n) >= 100 else (("  %d" % (200 - n)) if (200 - n) < 10 else " %d" % (200 - n))
     if text_bar(o, "A") != expA or text_bar(o, "B") != expB:
         bad.append((n, text_bar(o, "A"), expA, text_bar(o, "B"), expB))
-    hx = o.get(("Container/Content/A_Handle", "m_LocalPosition.x"))
-    if abs(hx - (BAR_X0 + (BAR_X1 - BAR_X0) * n / 200.0)) > 1e-6:
-        bad.append(("handle", n, hx))
-check("exhaustive 0..200: A/B digits and marker correct", not bad, bad[:5])
+check("exhaustive 0..200: A/B digits correct", not bad, bad[:5])
+# the thin marker on the bar shows the BOOST (printed scale 0 ... +30), whatever the level is
+bad = []
+for b in range(0, 31):
+    s = Sim(); s.frames(1)
+    s.p["CoyotePad/ValA"] = 120; s.p["CoyotePad/ValB"] = 40
+    s.p["CoyotePad/BoostA_f"] = b
+    s.p["CoyotePad/BoostB_f"] = 30 - b
+    s.frames(3)
+    o = s.display()
+    for handle, boost in (("A_Handle", b), ("B_Handle", 30 - b)):
+        hx = o.get(("Container/Content/" + handle, "m_LocalPosition.x"))
+        if hx is None or abs(hx - (BAR_X0 + (BAR_X1 - BAR_X0) * boost / 30.0)) > 1e-6:
+            bad.append((handle, boost, hx))
+check("exhaustive boost 0..30: the markers of A and B sit at boost/30 of the bar", not bad, bad[:5])
+# ...and on the real thing: a level of 100 with the slider pulled half way puts the marker half way along the BAR, not at 100/200
+s = Sim(); s.frames(2)
+set_level(s, "A", 100)
+o = s.display()
+check("level 100, slider at rest: the marker is at the left end of the bar (it is not a level marker)",
+      abs(o.get(("Container/Content/A_Handle", "m_LocalPosition.x")) - BAR_X0) < 1e-6, o.get(("Container/Content/A_Handle", "m_LocalPosition.x")))
+grab(s, "A", 0.5)
+o = s.display()
+boost = s.p["CoyotePad/ValA"] - 100
+check("level 100, slider pulled half way: the marker follows the boost (%d of 30), the plate shows the level" % boost,
+      12 <= boost <= 16 and abs(o.get(("Container/Content/A_Handle", "m_LocalPosition.x")) - (BAR_X0 + (BAR_X1 - BAR_X0) * boost / 30.0)) < 1e-6
+      and text_bar(o, "A") == "%3d" % (100 + boost), (boost, o.get(("Container/Content/A_Handle", "m_LocalPosition.x")), text_bar(o, "A")))
+let_go(s, "A")
+o = s.display()
+check("... and back at the left end of the bar when let go (the plate shows 100 again)",
+      abs(o.get(("Container/Content/A_Handle", "m_LocalPosition.x")) - BAR_X0) < 1e-6 and text_bar(o, "A") == "100", text_bar(o, "A"))
 badf = []
 for f in range(10, 101, 10):
     s = Sim(); s.frames(1)

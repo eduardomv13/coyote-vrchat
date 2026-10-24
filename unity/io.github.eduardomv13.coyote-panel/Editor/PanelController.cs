@@ -28,7 +28,7 @@ namespace CoyotePanel.Editor
             void F(string n, float d = 0f) { c.AddParameter(new AnimatorControllerParameter { name = n, type = AnimatorControllerParameterType.Float, defaultFloat = d }); }
             void I(string n, int d = 0) { c.AddParameter(new AnimatorControllerParameter { name = n, type = AnimatorControllerParameterType.Int, defaultInt = d }); }
             void B(string n) { c.AddParameter(new AnimatorControllerParameter { name = n, type = AnimatorControllerParameterType.Bool, defaultBool = false }); }
-            F(P_A); F(P_B); F(P_STRA); F(P_STRB); F(P_VALA_F); F(P_VALB_F); F(P_FREQ_F); F(P_ONE, 1f);
+            F(P_A); F(P_B); F(P_STRA); F(P_STRB); F(P_VALA_F); F(P_VALB_F); F(P_FREQ_F); F(P_ONE, 1f); F(P_BOOSTA_F); F(P_BOOSTB_F);
             I(P_FREQ, 50); I(P_VALA); I(P_VALB); I(P_BASEA); I(P_BASEB);
             B(P_GRABA); B(P_GRABB); B(P_POSEA); B(P_POSEB); B(P_SHOW); B(P_ANCHOR); B(P_ZERO); B(P_STOP);
             foreach (var tb in AllButtons) { B(TouchSelf(tb)); B(TouchOthers(tb)); }
@@ -54,8 +54,8 @@ namespace CoyotePanel.Editor
             // ---- bars: a BOOST on top of the value set with the -/+ buttons. While the grip is grabbed (or posed = locked in
             //      place) the stretch adds 0..BOOST_MAX to the value the channel had when it was grabbed; letting go gives
             //      that value back
-            TrackLayer(c, "CoyotePad_TrackA", P_GRABA, P_POSEA, P_STRA, P_VALA, P_BASEA);
-            TrackLayer(c, "CoyotePad_TrackB", P_GRABB, P_POSEB, P_STRB, P_VALB, P_BASEB);
+            TrackLayer(c, "CoyotePad_TrackA", P_GRABA, P_POSEA, P_STRA, P_VALA, P_BASEA, P_BOOSTA_F);
+            TrackLayer(c, "CoyotePad_TrackB", P_GRABB, P_POSEB, P_STRB, P_VALB, P_BASEB, P_BOOSTB_F);
 
             // ---- "Show panel": returns the panel to the hand (unlocks it from the world)
             {
@@ -150,8 +150,9 @@ namespace CoyotePanel.Editor
                 subs.Add(DigitsTree(c, "B_Digit_H", P_VALB_F, 'H', 200));
                 subs.Add(DigitsTree(c, "F_Digit_T", P_FREQ_F, 'T', 100));
                 subs.Add(DigitsTree(c, "F_Digit_H", P_FREQ_F, 'H', 100));
-                subs.Add(HandleTree(c, "A_Handle", P_VALA_F, ROW_A));
-                subs.Add(HandleTree(c, "B_Handle", P_VALB_F, ROW_B));
+                // the thin marker shows the BOOST (0..BOOST_MAX) on the bar, whose printed scale is 0 ... +30
+                subs.Add(HandleTree(c, "A_Handle", P_BOOSTA_F, ROW_A));
+                subs.Add(HandleTree(c, "B_Handle", P_BOOSTB_F, ROW_B));
                 foreach (var bt in subs) root.AddChild(bt);
                 var ch = root.children;
                 for (int i = 0; i < ch.Length; i++) ch[i].directBlendParameter = P_ONE;
@@ -177,7 +178,8 @@ namespace CoyotePanel.Editor
         // layer walks one step per frame along the chain of Boost states, following the stretch of the grip; each state
         // writes base + its own boost when it is entered. Letting go restores the remembered value instead of subtracting
         // (so the ceiling clamp at 200 can never make the value drift).
-        static void TrackLayer(AnimatorController c, string name, string grabbed, string posed, string stretch, string val, string baseVal)
+        // `boostF` is a local float that always says the current boost (0..BOOST_MAX): the thin marker on the bar follows it.
+        static void TrackLayer(AnimatorController c, string name, string grabbed, string posed, string stretch, string val, string baseVal, string boostF)
         {
             int steps = BOOST_MAX / BOOST_STEP;
             float span = STR_SRC_MAX - STR_SRC_MIN;
@@ -185,8 +187,12 @@ namespace CoyotePanel.Editor
             var idle = State(sm, "Idle", 0, 0);
             var hold = State(sm, "Hold", 1, 0);
             var rel = State(sm, "Release", 2, 0);
-            Driver(hold, true).parameters.Add(Copy(val, baseVal));
-            Driver(rel, true).parameters.Add(Copy(baseVal, val));
+            var dh = Driver(hold, true);
+            dh.parameters.Add(Copy(val, baseVal));
+            dh.parameters.Add(SetV(boostF, 0f));
+            var dr = Driver(rel, true);
+            dr.parameters.Add(Copy(baseVal, val));
+            dr.parameters.Add(SetV(boostF, 0f));
 
             var boost = new AnimatorState[steps + 1];
             for (int k = 0; k <= steps; k++)
@@ -195,6 +201,7 @@ namespace CoyotePanel.Editor
                 var d = Driver(boost[k], true);
                 d.parameters.Add(Copy(baseVal, val));
                 if (k > 0) d.parameters.Add(Add(val, k * BOOST_STEP));
+                d.parameters.Add(SetV(boostF, k * BOOST_STEP));
             }
 
             foreach (var gate in new[] { grabbed, posed })
@@ -353,7 +360,7 @@ namespace CoyotePanel.Editor
             return bt;
         }
 
-        // bar marker: x goes from BAR_X0 (0) to BAR_X1 (200); y and z FIXED in both clips (full vector)
+        // bar marker: x goes from BAR_X0 (boost 0) to BAR_X1 (boost BOOST_MAX); y and z FIXED in both clips (full vector)
         static BlendTree HandleTree(AnimatorController c, string quad, string param, float row)
         {
             string path = "Container/Content/" + quad;
@@ -368,7 +375,7 @@ namespace CoyotePanel.Editor
             var bt = new BlendTree { name = quad, blendType = BlendTreeType.Simple1D, blendParameter = param, useAutomaticThresholds = false };
             AssetDatabase.AddObjectToAsset(bt, c);
             bt.AddChild(lo, 0f);
-            bt.AddChild(hi, 200f);
+            bt.AddChild(hi, (float)BOOST_MAX);
             return bt;
         }
 

@@ -70,7 +70,7 @@ On top of that, this panel adds risks of its own:
 | **A** / **B** gold grips | A **boost**: grab and drag **sideways** along the bar and the value rises by up to **+30** above what it was when you grabbed it (0 at the left end of the bar, +30 at the right end, in steps of 2; never above 200). **Let go and the value goes back to what it was** while the grip springs back. Pulling forward, backward, up or down, or to the left of the rest position, does not raise it (see [how the sliders work](#how-the-sliders-work)). Grabbing without pulling does not change it. A grip can also be *posed* (grab, then pull the trigger/click) to lock it where it is; a posed grip keeps its boost until the pose is released. |
 | **−** / **+** buttons (per channel) | Touch with a fingertip = ±10, limited to 0…200. One step per touch; a finger left on the button does not repeat. They set the level that stays; they do nothing while that channel's grip is held. |
 | **▼** / **▲** (frequency) | Touch = ∓/±10 Hz, limited to 10…100 Hz. Starts at 50 Hz. One step per touch. |
-| Plate numbers | Channel A, channel B and frequency, always readable (unlit). |
+| Plate numbers | Channel A, channel B and frequency, always readable (unlit). The numbers beside the −/+ buttons are the **whole value** (level + boost). The scale printed under each bar reads **0, +10, +20, +30**: the bar is the boost, and a thin marker on it shows the current boost. |
 | Menu **Coyote > Show panel** | Shows/hides the panel in your hand. Showing it also puts it back in your hand if it was locked in the world. |
 | Menu **Coyote > Lock in world** | The panel stays where it is (VRChat's constraint "Freeze To World"), so you can leave it standing and use both hands, or let others use it. |
 | Menu **Coyote > Zero channels** | Sets A and B to 0 on the panel. |
@@ -216,7 +216,7 @@ converts them if your avatar uses Write Defaults off).
 | `CoyotePad_ShowReset` | "Show panel" clears the world lock. |
 | `CoyotePad_Anchor` | "Lock in world": animates `FreezeToWorld` on the constraint. |
 | `CoyotePad_PressA`, `_PressB`, `_PressF` | The button "click" (blendshapes on the plate mesh). |
-| `CoyotePad_Display` | Direct blend trees that move the digits (texture offset) and the value markers. |
+| `CoyotePad_Display` | Direct blend trees that move the digits (texture offset) and the boost markers on the bars (driven by the local floats `CoyotePad/BoostA_f`/`BoostB_f`, 0…30). |
 
 Two VRChat quirks the controller is built around, so you do not trip on them if you edit it: animating a vector
 property (`material._MainTex_ST`, `m_LocalPosition`) needs **all** its components or the missing ones become 0, and a
@@ -247,11 +247,11 @@ by its own receivers. Those two problems are what 0.2.1 changes, and 0.2.1 itsel
   whose slider layers are different on purpose.
 - An offline simulator ([`Tools~/simulate_controller.py`](io.github.eduardomv13.coyote-panel/Tools~/simulate_controller.py))
   replays the controller **exactly as Unity built it** (the example export was made from the 0.3.0 builder) and passes
-  **95 checks**: the boost (+30 at the end of the bar, never more, back to the old value on release, also from a jump,
+  **99 checks**: the boost (+30 at the end of the bar, never more, back to the old value on release, also from a jump,
   after many grabs, near the ceiling, with STOP/Zero while held, and 40 random sessions of 120 grabs, pulls, poses, releases and touches checked on every frame), the buttons being ignored while the grip is held,
   letting go, posing, the dead zone, touching −/+ and the arrows, frequency limits, zero/stop, the lock, digits
-  0…200, `CoyoteA = value/200` after load. A deliberately broken controller (a Mirror transition with no exit time, the
-  bug that once stopped the slider from reaching the program) fails 16 of them. It tests the *logic*, with
+  0…200, the marker on the bar following the boost (0…30) and not the level, `CoyoteA = value/200` after load. A deliberately broken controller (a Mirror transition with no exit time, the
+  bug that once stopped the slider from reaching the program) fails 18 of them. It tests the *logic*, with
   VRChat's animator semantics as we understand them; it is not VRChat.
 - A VRCFury *Build an Editor Test Copy* (which runs the Modular Avatar/NDMF build) of the author's avatar and of a bare
   sample rig: 858 animation bindings, 0 unresolved, all vector components present, the Mirror layer's transitions
@@ -323,8 +323,11 @@ Side effects you should know about:
   `Editor/PanelLayout.cs` (shorter = a shorter line but more leakage from forward pulls; longer = the reverse).
 - A pull toward the root and a forward pull never move the knob much, but a big forward pull (30 cm or more) can still
   add a few percent. This is a physical approximation, not a guarantee.
-- Letting go of the grip makes the knob spring back by itself (the PhysBone's `Pull`), and the value goes to 0 at the same
-  moment, so the marker on the plate does not wait for the knob.
+- Letting go of the grip makes the knob spring back by itself (the PhysBone's `Pull`), and the value goes back to what it
+  was at the same moment, so the marker on the plate does not wait for the knob.
+- The marker on the bar is driven by a **local** parameter (the boost lives on the wearer's client only), so other
+  players see the numbers and the knob but their copy of the marker stays at the left end. The numbers (the whole value)
+  are synced for everyone as before.
 
 ## How the touch buttons work
 

@@ -97,11 +97,12 @@ def row_bar(y, label):
     x0, y0 = px(BAR_X0, y + 0.008)
     x1, y1 = px(BAR_X1, y - 0.008)
     d.rounded_rectangle([x0, y0, x1, y1], radius=14, fill=TRACK, outline=GOLD, width=3)
-    for i in range(5):
-        xm = BAR_X0 + (BAR_X1 - BAR_X0) * i / 4
+    # the bar is a BOOST on top of the level set with the -/+ buttons (0 ... +30), not the level itself: ticks every +10
+    for i in range(4):
+        xm = BAR_X0 + (BAR_X1 - BAR_X0) * i / 3
         d.line([px(xm, y - 0.014), px(xm, y - 0.024)], fill=GOLD, width=4)
-    for i, t in ((0, "0"), (2, "100"), (4, "200")):
-        xm = BAR_X0 + (BAR_X1 - BAR_X0) * i / 4
+    for i, t in ((0, "0"), (1, "+10"), (2, "+20"), (3, "+30")):
+        xm = BAR_X0 + (BAR_X1 - BAR_X0) * i / 3
         tx_, ty_ = px(xm, y - 0.033)
         d.text((tx_, ty_), t, font=font(0.014), fill=GOLD, anchor="mm")
     inset(sum(DIG_X) / 3, y, CELL_W * 3 + 0.006, CELL_H + 0.006)

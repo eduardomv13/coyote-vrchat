@@ -67,6 +67,9 @@ namespace CoyotePanel.Editor
         // The value a channel had when its slider was grabbed (local only): the boost is added on top of it and it is put
         // back when the slider is let go
         public const string P_BASEA = "CoyotePad/BaseA", P_BASEB = "CoyotePad/BaseB";
+        // The current boost (0..BOOST_MAX) of each slider, local only: it moves the thin marker along the bar, whose printed
+        // scale is 0 ... +30 (the numbers on the plate show the whole value, base + boost)
+        public const string P_BOOSTA_F = "CoyotePad/BoostA_f", P_BOOSTB_F = "CoyotePad/BoostB_f";
         // PhysBone prefixes (VRChat creates <prefix>_IsGrabbed, <prefix>_IsPosed, <prefix>_Stretch ...)
         public const string PFX_A = "CoyotePad/PbA", PFX_B = "CoyotePad/PbB";
         public const string P_GRABA = PFX_A + "_IsGrabbed", P_GRABB = PFX_B + "_IsGrabbed";

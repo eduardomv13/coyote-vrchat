@@ -3,19 +3,23 @@
 ## 0.3.0
 
 The slider is now a **boost**, asked for because it was too easy for anyone to drag a grip to 200. **Checked offline
-only (the simulator replays the controller exactly as Unity built it: 95 checks); not tried in VRChat yet.**
+only (the simulator replays the controller exactly as Unity built it: 99 checks); not tried in VRChat yet.**
 
 - **A grip adds at most +30 to the value that is already set.** The channel's value is remembered when the grip is grabbed;
   pulling the grip along the bar adds 0 to +30 (steps of 2, never above 200), and **letting go gives the remembered value
   back** (50 + a full pull = 80, and it goes back to 50). Posing a grip keeps the boost until the pose is released.
   Constants: `BOOST_MAX`, `BOOST_STEP`, `BOOST_HYST` in `Editor/PanelLayout.cs`.
+- **The scale printed on the plate under each bar now reads 0, +10, +20, +30** (it said 0, 100, 200): the bar is the boost.
+  The thin marker on the bar shows the current boost (a new local parameter, `CoyotePad/BoostA_f`/`BoostB_f`), and the
+  numbers beside the −/+ buttons still show the whole value. `Textures/CoyotePlate.png` was redrawn with
+  `Tools~/make_textures.py` (only the two scales changed). The marker is local, so other players' copy of it stays at 0.
 - To change the level for good (or by more than 30) people have to use the **−/+ buttons**, which are still ±10 per touch.
   They now do nothing while that channel's grip is held or posed.
 - STOP and "Zero channels" also forget the remembered values, so a slider that is being held does not bring the old power
   back when it is let go.
-- Two new local (not synced) animator parameters, `CoyotePad/BaseA` and `CoyotePad/BaseB`; the synced parameter memory is
+- Four new local (not synced) animator parameters, `CoyotePad/BaseA`/`BaseB` (the remembered values) and `BoostA_f`/`BoostB_f`; the synced parameter memory is
   unchanged (26 bits). The controller goes from 40 to 68 states, still 14 layers.
-- The offline simulator has 95 checks (it had 55) and the example export was regenerated from the 0.3.0 builder.
+- The offline simulator has 99 checks (it had 55) and the example export was regenerated from the 0.3.0 builder.
 - **Rebuild the panel on your avatar** (Tools > Coyote Panel > Install on selected avatar) and upload it again to get this.
 
 ## 0.2.1
