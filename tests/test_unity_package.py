@@ -131,7 +131,7 @@ class ControllerSimulator(unittest.TestCase):
         res = subprocess.run([sys.executable, "-I", str(sim), str(example)], capture_output=True, text=True, timeout=120)
         self.assertEqual(res.returncode, 0, res.stdout[-3000:] + res.stderr[-1000:])
         self.assertIn("FAILURES: 0", res.stdout)
-        self.assertGreaterEqual(res.stdout.count("PASS "), 99)       # 55 before the boost slider (0.3.0) added its checks
+        self.assertGreaterEqual(res.stdout.count("PASS "), 55)
 
 
 if __name__ == "__main__":

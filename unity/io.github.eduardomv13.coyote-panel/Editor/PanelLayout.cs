@@ -43,14 +43,8 @@ namespace CoyotePanel.Editor
         // touchHeight): a fingertip counts as pressing when it gets within about (radius + height) of the plate surface.
         public const float TOUCH_DEBOUNCE = 0.1f;      // seconds a press lasts at least (contact chatter must not add steps)
 
-        // The slider is a temporary BOOST on top of the value that was set with the -/+ buttons: pulling the grip all the
-        // way adds BOOST_MAX, in steps of BOOST_STEP, and letting go gives back the value the channel had when the grip was
-        // grabbed. So one grab can never move the power by more than BOOST_MAX; going further takes -/+ touches.
-        public const int BOOST_MAX = 30, BOOST_STEP = 2;
-        public const float BOOST_HYST = 0.1f;          // fraction of a step: stops the value from flickering between two steps
-
-        // _Stretch (0-1) -> boost 0..BOOST_MAX: below 0.03 it does not count (a dead zone: a small forward pull or hand jitter
-        // must not move the value, and grabbing without pulling does not change it); 0.97 already means the full boost
+        // _Stretch (0-1) -> 0-200: below 0.03 it does not update (a dead zone: a small forward pull or hand jitter must
+        // not move the value, and grabbing without pulling does not change it); 0.97 already means 200
         public const float STR_SRC_MIN = 0.03f, STR_SRC_MAX = 0.97f;
     }
 
@@ -64,12 +58,6 @@ namespace CoyotePanel.Editor
         // The numbers shown on the plate (synced, so everyone sees them)
         public const string P_VALA = "CoyotePad/ValA", P_VALB = "CoyotePad/ValB";
         public const string P_VALA_F = "CoyotePad/ValA_f", P_VALB_F = "CoyotePad/ValB_f", P_FREQ_F = "CoyotePad/Freq_f";
-        // The value a channel had when its slider was grabbed (local only): the boost is added on top of it and it is put
-        // back when the slider is let go
-        public const string P_BASEA = "CoyotePad/BaseA", P_BASEB = "CoyotePad/BaseB";
-        // The current boost (0..BOOST_MAX) of each slider, local only: it moves the thin marker along the bar, whose printed
-        // scale is 0 ... +30 (the numbers on the plate show the whole value, base + boost)
-        public const string P_BOOSTA_F = "CoyotePad/BoostA_f", P_BOOSTB_F = "CoyotePad/BoostB_f";
         // PhysBone prefixes (VRChat creates <prefix>_IsGrabbed, <prefix>_IsPosed, <prefix>_Stretch ...)
         public const string PFX_A = "CoyotePad/PbA", PFX_B = "CoyotePad/PbB";
         public const string P_GRABA = PFX_A + "_IsGrabbed", P_GRABB = PFX_B + "_IsGrabbed";
