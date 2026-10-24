@@ -29,7 +29,7 @@ namespace CoyotePanel.Editor
             void I(string n, int d = 0) { c.AddParameter(new AnimatorControllerParameter { name = n, type = AnimatorControllerParameterType.Int, defaultInt = d }); }
             void B(string n) { c.AddParameter(new AnimatorControllerParameter { name = n, type = AnimatorControllerParameterType.Bool, defaultBool = false }); }
             F(P_A); F(P_B); F(P_STRA); F(P_STRB); F(P_VALA_F); F(P_VALB_F); F(P_FREQ_F); F(P_ONE, 1f);
-            I(P_FREQ, 50); I(P_VALA); I(P_VALB);
+            I(P_FREQ, 50); I(P_VALA); I(P_VALB); I(P_BASEA); I(P_BASEB);
             B(P_GRABA); B(P_GRABB); B(P_POSEA); B(P_POSEB); B(P_SHOW); B(P_ANCHOR); B(P_ZERO); B(P_STOP);
             foreach (var tb in AllButtons) { B(TouchSelf(tb)); B(TouchOthers(tb)); }
 
@@ -51,10 +51,11 @@ namespace CoyotePanel.Editor
                 }
             }
 
-            // ---- bars: while the grip is grabbed (or posed = locked in place), the stretch becomes the value;
-            //      letting go of a grip that is not posed sets the value back to 0
-            TrackLayer(c, "CoyotePad_TrackA", P_GRABA, P_POSEA, P_STRA, P_VALA);
-            TrackLayer(c, "CoyotePad_TrackB", P_GRABB, P_POSEB, P_STRB, P_VALB);
+            // ---- bars: a BOOST on top of the value set with the -/+ buttons. While the grip is grabbed (or posed = locked in
+            //      place) the stretch adds 0..BOOST_MAX to the value the channel had when it was grabbed; letting go gives
+            //      that value back
+            TrackLayer(c, "CoyotePad_TrackA", P_GRABA, P_POSEA, P_STRA, P_VALA, P_BASEA);
+            TrackLayer(c, "CoyotePad_TrackB", P_GRABB, P_POSEB, P_STRB, P_VALB, P_BASEB);
 
             // ---- "Show panel": returns the panel to the hand (unlocks it from the world)
             {
@@ -66,9 +67,9 @@ namespace CoyotePanel.Editor
                 t = Link(rst, idle); t.AddCondition(AnimatorConditionMode.IfNot, 0, P_SHOW);
             }
 
-            // ---- -/+ buttons per channel (+-10 per touch)
-            StepLayer(c, "CoyotePad_StepA", TB_AMINUS, TB_APLUS, P_VALA);
-            StepLayer(c, "CoyotePad_StepB", TB_BMINUS, TB_BPLUS, P_VALB);
+            // ---- -/+ buttons per channel (+-10 per touch); they do nothing while that channel's slider is held
+            StepLayer(c, "CoyotePad_StepA", TB_AMINUS, TB_APLUS, P_VALA, P_GRABA, P_POSEA);
+            StepLayer(c, "CoyotePad_StepB", TB_BMINUS, TB_BPLUS, P_VALB, P_GRABB, P_POSEB);
 
             // ---- animated button click (blendshapes on the static mesh)
             PressLayer(c, "CoyotePad_PressA", TB_AMINUS, TB_APLUS, BS_AMINUS, BS_APLUS);
@@ -111,6 +112,9 @@ namespace CoyotePanel.Editor
                 var d = Driver(z, true);
                 d.parameters.Add(SetV(P_VALA, 0f));
                 d.parameters.Add(SetV(P_VALB, 0f));
+                // a slider that is held right now must not give the old value back when it is let go
+                d.parameters.Add(SetV(P_BASEA, 0f));
+                d.parameters.Add(SetV(P_BASEB, 0f));
                 var t = Link(idle, z); t.AddCondition(AnimatorConditionMode.If, 0, P_ZERO);
                 t = Link(idle, z); t.AddCondition(AnimatorConditionMode.If, 0, P_STOP);
                 t = Link(z, idle); t.AddCondition(AnimatorConditionMode.IfNot, 0, P_ZERO); t.AddCondition(AnimatorConditionMode.IfNot, 0, P_STOP);
@@ -163,30 +167,63 @@ namespace CoyotePanel.Editor
             return c;
         }
 
-        // While the grip is held (IsGrabbed) or locked in place (IsPosed) the stretch is copied into the value every frame.
-        // When it is neither, the value goes back to 0: letting go of the slider cuts the power as the grip springs back.
-        static void TrackLayer(AnimatorController c, string name, string grabbed, string posed, string stretch, string val)
+        // The slider is a temporary BOOST on top of the value the channel had when the grip was grabbed.
+        //
+        //   Idle --grabbed or posed--> Hold (remembers the value in `baseVal`) --> Boost +0 <-> Boost +2 <-> ... <-> Boost +30
+        //   any Boost --neither grabbed nor posed--> Release (puts `baseVal` back) --> Idle
+        //
+        // Boost +k sets `val` = `baseVal` + k, so the value is never more than BOOST_MAX above what it was. An Animator
+        // condition can only compare a parameter with a constant (not "value + 30"), so instead of computing the sum the
+        // layer walks one step per frame along the chain of Boost states, following the stretch of the grip; each state
+        // writes base + its own boost when it is entered. Letting go restores the remembered value instead of subtracting
+        // (so the ceiling clamp at 200 can never make the value drift).
+        static void TrackLayer(AnimatorController c, string name, string grabbed, string posed, string stretch, string val, string baseVal)
         {
+            int steps = BOOST_MAX / BOOST_STEP;
+            float span = STR_SRC_MAX - STR_SRC_MIN;
             var sm = Layer(c, name);
             var idle = State(sm, "Idle", 0, 0);
-            var t1 = State(sm, "Track1", 1, -1);
-            var t2 = State(sm, "Track2", 1, 1);
+            var hold = State(sm, "Hold", 1, 0);
             var rel = State(sm, "Release", 2, 0);
-            foreach (var s in new[] { t1, t2 })
-                Driver(s, true).parameters.Add(CopyRange(stretch, val, STR_SRC_MIN, STR_SRC_MAX, 0f, 200f));
-            Driver(rel, true).parameters.Add(SetV(val, 0f));
+            Driver(hold, true).parameters.Add(Copy(val, baseVal));
+            Driver(rel, true).parameters.Add(Copy(baseVal, val));
+
+            var boost = new AnimatorState[steps + 1];
+            for (int k = 0; k <= steps; k++)
+            {
+                boost[k] = State(sm, "Boost +" + (k * BOOST_STEP), 3 + k % 8, k / 8);
+                var d = Driver(boost[k], true);
+                d.parameters.Add(Copy(baseVal, val));
+                if (k > 0) d.parameters.Add(Add(val, k * BOOST_STEP));
+            }
+
             foreach (var gate in new[] { grabbed, posed })
             {
-                // only takes effect once the grip has left rest (grabbing without pulling does not change the value)
-                var t = Link(idle, t1); t.AddCondition(AnimatorConditionMode.If, 0, gate); t.AddCondition(AnimatorConditionMode.Greater, STR_SRC_MIN, stretch);
-                t = Link(t1, t2); t.AddCondition(AnimatorConditionMode.If, 0, gate);
-                t = Link(t2, t1); t.AddCondition(AnimatorConditionMode.If, 0, gate);
-            }
-            foreach (var s in new[] { t1, t2 })
-            {
-                var t = Link(s, rel); t.AddCondition(AnimatorConditionMode.IfNot, 0, grabbed); t.AddCondition(AnimatorConditionMode.IfNot, 0, posed);
+                var t = Link(idle, hold); t.AddCondition(AnimatorConditionMode.If, 0, gate);
             }
             // exit time 0 + zero duration: a valid transition without a condition (see the note at the top of the file)
+            var go = Link(hold, boost[0]); go.hasExitTime = true; go.exitTime = 0f;
+
+            for (int k = 0; k <= steps; k++)
+            {
+                // letting go comes first (a transition list is checked in order)
+                var t = Link(boost[k], rel);
+                t.AddCondition(AnimatorConditionMode.IfNot, 0, grabbed);
+                t.AddCondition(AnimatorConditionMode.IfNot, 0, posed);
+                if (k < steps)   // up one step once the stretch is clearly past the middle of the next step...
+                {
+                    t = Link(boost[k], boost[k + 1]);
+                    t.AddCondition(AnimatorConditionMode.Greater, STR_SRC_MIN + span * ((k + 1) - 0.5f + BOOST_HYST) / steps, stretch);
+                    // ...but never above 200: the boost stops where base + boost would pass the ceiling (so the value never
+                    // even touches 201 and no clamp is needed; the Clamp layer only acts when the value changes while idle)
+                    t.AddCondition(AnimatorConditionMode.Less, 201f - BOOST_STEP * (k + 1), baseVal);
+                }
+                if (k > 0)       // down one step once it is clearly below the middle of this step
+                {
+                    t = Link(boost[k], boost[k - 1]);
+                    t.AddCondition(AnimatorConditionMode.Less, STR_SRC_MIN + span * (k - 0.5f - BOOST_HYST) / steps, stretch);
+                }
+            }
             var back = Link(rel, idle); back.hasExitTime = true; back.exitTime = 0f;
         }
 
@@ -235,7 +272,9 @@ namespace CoyotePanel.Editor
 
         // -/+ : ONE step of +-10 per touch (limited to 0..200). No repeat while a finger stays on the button: a finger
         // resting on a button must not keep raising the power, so every further step needs a new touch.
-        static void StepLayer(AnimatorController c, string name, string minus, string plus, string val)
+        // While the channel's slider is held (grabbed or posed) the buttons do nothing: the slider owns the value then and
+        // gives the old one back when it is let go.
+        static void StepLayer(AnimatorController c, string name, string minus, string plus, string val, string grabbed, string posed)
         {
             var sm = Layer(c, name);
             var idle = State(sm, "Idle", 0, 0);
@@ -243,8 +282,18 @@ namespace CoyotePanel.Editor
             var m = State(sm, "Minus", 1, 1);
             Driver(p, true).parameters.Add(Add(val, 10f));
             Driver(m, true).parameters.Add(Add(val, -10f));
-            foreach (var t in LinkOnTouch(idle, p, plus)) t.AddCondition(AnimatorConditionMode.Less, 191f, val);
-            foreach (var t in LinkOnTouch(idle, m, minus)) t.AddCondition(AnimatorConditionMode.Greater, 9f, val);
+            foreach (var t in LinkOnTouch(idle, p, plus))
+            {
+                t.AddCondition(AnimatorConditionMode.Less, 191f, val);
+                t.AddCondition(AnimatorConditionMode.IfNot, 0, grabbed);
+                t.AddCondition(AnimatorConditionMode.IfNot, 0, posed);
+            }
+            foreach (var t in LinkOnTouch(idle, m, minus))
+            {
+                t.AddCondition(AnimatorConditionMode.Greater, 9f, val);
+                t.AddCondition(AnimatorConditionMode.IfNot, 0, grabbed);
+                t.AddCondition(AnimatorConditionMode.IfNot, 0, posed);
+            }
             LinkOffTouch(p, idle, plus, TOUCH_DEBOUNCE);
             LinkOffTouch(m, idle, minus, TOUCH_DEBOUNCE);
         }

@@ -1,7 +1,8 @@
 # Coyote panel for VRChat avatars
 
-A hand-held control panel for a **DG-LAB Coyote 3.0**, built into a VRChat avatar. Two intensity sliders (A and B), −/+
-buttons, and a frequency control. You grab the gold grips (PhysBones) and drag them sideways, you press the buttons by
+A hand-held control panel for a **DG-LAB Coyote 3.0**, built into a VRChat avatar. For each channel (A and B), −/+
+buttons that set the level and a slider that only adds a short **boost** of up to +30 on top of it, plus a frequency
+control. You grab the gold grips (PhysBones) and drag them sideways, you press the buttons by
 touching them with a fingertip (contacts), the numbers show on the plate, and the values
 reach the [coyote-vrchat PC program](../README.md) through VRChat OSC.
 
@@ -33,9 +34,12 @@ On top of that, this panel adds risks of its own:
   grabs, and the buttons accept fingertips, from the wearer *and from other players*. "Lock in world" leaves the panel
   standing in the world so other people can walk up to it. Only do that with people you completely trust, and not in
   public instances.
-- **Letting go of a grip sets its channel back to 0.** The power only stays while the grip is held, or while it is
-  *posed* (grab it and pull the trigger/click to lock it in place; that keeps the value until you release the pose).
-  The buttons set a value that stays until you change it.
+- **The slider is only a boost of up to +30.** Grabbing a grip and pulling it all the way adds 30 to the value that is
+  already set (50 becomes 80), no matter who pulls or for how long; **letting go gives the old value back** (80 goes
+  back to 50). The power only stays boosted while the grip is held, or while it is *posed* (grab it and pull the
+  trigger/click to lock it in place; that keeps the boost until you release the pose). To go further than +30 the
+  **−/+ buttons** are the way: they set the level that stays until you change it, and they do nothing while that
+  channel's grip is held.
 - **A touch button is one step per touch, never a repeat.** A fingertip resting on a button must not keep raising the
   power, so to go up by 30 you touch three times. The fingers of both of the wearer's hands count, and so do other
   players'. The fingertip has to be practically on the button (about 6 mm from the plate, see
@@ -63,8 +67,8 @@ On top of that, this panel adds risks of its own:
 
 | Control | What it does |
 |---|---|
-| **A** / **B** gold grips | Grab and drag **sideways** along the bar: the value follows (0 at the left end, 200 at the right end). **Let go and the value drops to 0** while the grip springs back. Pulling forward, backward, up or down, or to the left of the rest position, does not raise it (see [how the sliders work](#how-the-sliders-work)). Grabbing without pulling does not change it. A grip can also be *posed* (grab, then pull the trigger/click) to lock it where it is; a posed grip keeps its value until the pose is released. |
-| **−** / **+** buttons (per channel) | Touch with a fingertip = ±10, limited to 0…200. One step per touch; a finger left on the button does not repeat. |
+| **A** / **B** gold grips | A **boost**: grab and drag **sideways** along the bar and the value rises by up to **+30** above what it was when you grabbed it (0 at the left end of the bar, +30 at the right end, in steps of 2; never above 200). **Let go and the value goes back to what it was** while the grip springs back. Pulling forward, backward, up or down, or to the left of the rest position, does not raise it (see [how the sliders work](#how-the-sliders-work)). Grabbing without pulling does not change it. A grip can also be *posed* (grab, then pull the trigger/click) to lock it where it is; a posed grip keeps its boost until the pose is released. |
+| **−** / **+** buttons (per channel) | Touch with a fingertip = ±10, limited to 0…200. One step per touch; a finger left on the button does not repeat. They set the level that stays; they do nothing while that channel's grip is held. |
 | **▼** / **▲** (frequency) | Touch = ∓/±10 Hz, limited to 10…100 Hz. Starts at 50 Hz. One step per touch. |
 | Plate numbers | Channel A, channel B and frequency, always readable (unlit). |
 | Menu **Coyote > Show panel** | Shows/hides the panel in your hand. Showing it also puts it back in your hand if it was locked in the world. |
@@ -196,7 +200,7 @@ The PhysBone and contact parameters (`CoyotePad/PbA_Stretch`, `…_IsGrabbed`, `
 and so on) are not part of the avatar's expression parameters, so they are not synced and do not count. Measured in a built test copy: the author's avatar totals **184 / 256**
 bits with the panel, and a bare sample rig **50 / 256** (26 of them from the panel).
 
-### The FX controller (14 layers, 40 states)
+### The FX controller (14 layers, 68 states)
 
 All layers have Write Defaults on and are merged by Modular Avatar (*Match Avatar Write Defaults* is on, so it
 converts them if your avatar uses Write Defaults off).
@@ -204,11 +208,11 @@ converts them if your avatar uses Write Defaults off).
 | Layer | Job |
 |---|---|
 | `CoyotePad_Mirror` | Copies the synced numbers to local floats for the display, and writes `CoyoteA = ValA/200`, `CoyoteB = ValB/200`. Loops every frame. |
-| `CoyotePad_TrackA`, `_TrackB` | While a grip is grabbed or posed, turns its PhysBone stretch into the value; when it is neither, sets the value to 0. |
-| `CoyotePad_StepA`, `_StepB` | −/+ touch buttons: ±10 per touch, no repeat, a press lasts at least 0.1 s (contact chatter adds no steps). |
+| `CoyotePad_TrackA`, `_TrackB` | The boost. When a grip is grabbed or posed it remembers the channel's value (`CoyotePad/BaseA`/`BaseB`, local, not synced), then walks along 16 `Boost +0 … +30` states, one step per frame, following the PhysBone stretch; each state writes *remembered value + its boost*. When the grip is neither grabbed nor posed it puts the remembered value back. The boost stops where it would pass 200. |
+| `CoyotePad_StepA`, `_StepB` | −/+ touch buttons: ±10 per touch, no repeat, a press lasts at least 0.1 s (contact chatter adds no steps). Ignored while that channel's grip is held. |
 | `CoyotePad_Freq` | ▼/▲ touch buttons: ±10 Hz per touch, 10…100. |
 | `CoyotePad_Clamp` | Safety clamp at 200. |
-| `CoyotePad_Zero` | "Zero channels" and STOP set A and B to 0. |
+| `CoyotePad_Zero` | "Zero channels" and STOP set A and B (and the remembered values) to 0. |
 | `CoyotePad_ShowReset` | "Show panel" clears the world lock. |
 | `CoyotePad_Anchor` | "Lock in world": animates `FreezeToWorld` on the constraint. |
 | `CoyotePad_PressA`, `_PressB`, `_PressF` | The button "click" (blendshapes on the plate mesh). |
@@ -237,14 +241,18 @@ by its own receivers. Those two problems are what 0.2.1 changes, and 0.2.1 itsel
 
 **Checked without VRChat (this is what the version in this repository was verified with):**
 
-- The controller built by this package is identical to the one built by the original, single-avatar builder (0
-  differences in 14 layers, 40 states, 23 parameters, all transitions, drivers and blend trees), and so are the
-  hierarchy, the meshes and the hand placement (with *Hand-bone axes*).
+- Up to 0.2.1: the controller built by this package was identical to the one built by the original, single-avatar
+  builder (0 differences in 14 layers, 40 states, 23 parameters, all transitions, drivers and blend trees), and so are
+  the hierarchy, the meshes and the hand placement (with *Hand-bone axes*). That comparison was not repeated for 0.3.0,
+  whose slider layers are different on purpose.
 - An offline simulator ([`Tools~/simulate_controller.py`](io.github.eduardomv13.coyote-panel/Tools~/simulate_controller.py))
-  replays the controller and passes **55 checks** (dragging, letting go, posing, the dead zone, touching −/+ and the arrows, frequency limits, zero/stop, the lock, digits
-  0…200, `CoyoteA = value/200` after load). A deliberately broken controller (a Mirror transition with no exit time, the
-  bug that once stopped the slider from reaching the program) fails 11 of them. It tests the *logic*, with VRChat's
-  animator semantics as we understand them; it is not VRChat.
+  replays the controller **exactly as Unity built it** (the example export was made from the 0.3.0 builder) and passes
+  **95 checks**: the boost (+30 at the end of the bar, never more, back to the old value on release, also from a jump,
+  after many grabs, near the ceiling, with STOP/Zero while held, and 40 random sessions of 120 grabs, pulls, poses, releases and touches checked on every frame), the buttons being ignored while the grip is held,
+  letting go, posing, the dead zone, touching −/+ and the arrows, frequency limits, zero/stop, the lock, digits
+  0…200, `CoyoteA = value/200` after load. A deliberately broken controller (a Mirror transition with no exit time, the
+  bug that once stopped the slider from reaching the program) fails 16 of them. It tests the *logic*, with
+  VRChat's animator semantics as we understand them; it is not VRChat.
 - A VRCFury *Build an Editor Test Copy* (which runs the Modular Avatar/NDMF build) of the author's avatar and of a bare
   sample rig: 858 animation bindings, 0 unresolved, all vector components present, the Mirror layer's transitions
   survive the build, 14 layers, the parameter counts above, the menu items in place.
@@ -254,6 +262,11 @@ by its own receivers. Those two problems are what 0.2.1 changes, and 0.2.1 itsel
 - The tests in this repository (`tests/test_unity_package.py`) check the package metadata, that every asset has a
   `.meta` file, that the layout numbers in the C# and in the texture script agree, and that the simulator passes on the
   example export (`Tools~/ctrl.example.json`).
+
+**0.3.0 (the boost slider, the buttons being ignored while the grip is held) has only been checked offline and has not
+been tried in VRChat.** The things to look at in the game: that the value really goes up by at most 30 and comes back,
+how the one-step-per-frame walk feels (it takes about 17 frames, roughly 0.2 to 0.3 s, to go from rest to +30), and what
+other players see.
 
 **Not tested (so treat all of this as unknown):**
 
@@ -285,6 +298,22 @@ bone is **1.5 m long**: its root sits 1.5 m to the left of the bar, and only its
 panel. Over such a long bone the distance is almost only the sideways distance. A forward pull of 10 cm adds about 3
 mm (under 2 % of the bar), a pull of 20 cm adds about 13 mm, and a pull toward the root is ignored (Max Squish is 0).
 A small dead zone (3 % of the travel) hides what is left, and the bone is only allowed to rotate 0.3°, which should keep the knob within about 8 mm of the bar.
+
+### The boost
+
+The grip does not set the value any more; it adds to it. The controller remembers the channel's value when the grip is
+grabbed, and the stretch of the grip (the dead zone at the start included) picks a **boost** between 0 and 30, in steps of
+2. While the grip is held the value is *remembered value + boost*; letting go puts the remembered value back, so the
+slider cannot be used to push the power up for good, and one grab never moves it by more than 30. Going further takes
+touches on the − / + buttons, which are one step of 10 each and do nothing while the grip is held. The boost stops where
+it would pass 200. The Zero layer also forgets the remembered value, so STOP (or "Zero channels") while a grip is held
+does not bring the old power back when it is let go.
+
+An Animator condition can only compare a parameter with a constant, never "value + 30", so the layer cannot compute the
+sum in one go. Instead it walks along a chain of 16 states (`Boost +0` … `Boost +30`), one transition per frame, up when
+the stretch is clearly past the middle of the next step and down when it is clearly below the middle of the current
+one (a small hysteresis stops it from flickering). Every state writes *remembered value + its own boost*. A fast pull
+therefore takes up to about 17 frames to arrive, and the value goes up by 2 per frame on the way, never past +30.
 
 Side effects you should know about:
 
@@ -327,6 +356,8 @@ the author's avatar has).
 | The panel is always visible in the game | You left the preview on. Turn off `Coyote Panel/Container/Content` (the options window has a button) and upload again. |
 | In the game the panel moves but nothing reaches the program | OSC enabled? **Options > OSC > Reset Config**, then select the avatar again. Is the program running and showing "OSC: receiving"? See [docs/AVATAR_SETUP.md](../docs/AVATAR_SETUP.md). |
 | `CoyoteA`/`CoyoteB` jump back to 0 or flicker | Something else also writes them (for example a radial puppet). Remove it: the panel owns those two parameters. |
+| The slider only adds 30 and then goes back | That is how 0.3.0 works on purpose: the slider is a boost of up to +30 on top of the level set with the −/+ buttons, and letting go gives the old level back. |
+| The −/+ buttons do nothing | If someone (or you) is holding or has *posed* that channel's grip, the buttons are ignored until the grip is let go (or the pose is released). |
 | "Parameter memory exceeded" on upload | The panel adds 26 bits. Free some elsewhere, or remove the panel. |
 | The Coyote submenu is not in the radial menu | The root menu is probably full (8 controls). Move the `Coyote` submenu (Install Target on its Menu Installer). |
 | The digits look blurry | The two textures were re-imported with other settings. In the Project window select the package's `Textures/*.png`: Mip Maps off, Wrap Mode Clamp, Compression None. |

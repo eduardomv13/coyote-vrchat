@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.0
+
+The slider is now a **boost**, asked for because it was too easy for anyone to drag a grip to 200. **Checked offline
+only (the simulator replays the controller exactly as Unity built it: 95 checks); not tried in VRChat yet.**
+
+- **A grip adds at most +30 to the value that is already set.** The channel's value is remembered when the grip is grabbed;
+  pulling the grip along the bar adds 0 to +30 (steps of 2, never above 200), and **letting go gives the remembered value
+  back** (50 + a full pull = 80, and it goes back to 50). Posing a grip keeps the boost until the pose is released.
+  Constants: `BOOST_MAX`, `BOOST_STEP`, `BOOST_HYST` in `Editor/PanelLayout.cs`.
+- To change the level for good (or by more than 30) people have to use the **−/+ buttons**, which are still ±10 per touch.
+  They now do nothing while that channel's grip is held or posed.
+- STOP and "Zero channels" also forget the remembered values, so a slider that is being held does not bring the old power
+  back when it is let go.
+- Two new local (not synced) animator parameters, `CoyotePad/BaseA` and `CoyotePad/BaseB`; the synced parameter memory is
+  unchanged (26 bits). The controller goes from 40 to 68 states, still 14 layers.
+- The offline simulator has 95 checks (it had 55) and the example export was regenerated from the 0.3.0 builder.
+- **Rebuild the panel on your avatar** (Tools > Coyote Panel > Install on selected avatar) and upload it again to get this.
+
 ## 0.2.1
 
 Two fixes after the first in-game test of 0.2.0 (which worked, apart from these). **Not tried in VRChat yet.**
