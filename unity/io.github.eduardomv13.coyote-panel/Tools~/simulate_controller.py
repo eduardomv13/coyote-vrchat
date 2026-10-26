@@ -161,6 +161,11 @@ check("initial: plate A='  0' B='  0' F=' 50'", (text_bar(o, "A"), text_bar(o, "
       (text_bar(o, "A"), text_bar(o, "B"), text_freq(o)))
 
 # ---------------------------------------------------------------- helpers for the physical inputs
+# The slider is a BOOST (0..+30, steps of 2) on top of the value the channel had when it was grabbed. The controller walks ONE
+# step per frame along the chain of Boost states, so reaching the full boost takes up to 17 frames: BOOST_FRAMES is enough.
+BOOST_FRAMES = 40
+
+
 def tap(s, button, who="Self", down=6, up=6):
     """A finger touches a button for `down` frames and leaves for `up` frames (who: Self = your own, Others = another player)."""
     n = "CoyotePad/%s_Touch%s" % (button, who)
@@ -170,7 +175,7 @@ def tap(s, button, who="Self", down=6, up=6):
     s.frames(up)
 
 
-def grab(s, bar, stretch, frames=3):
+def grab(s, bar, stretch, frames=BOOST_FRAMES):
     s.p["CoyotePad/Pb%s_IsGrabbed" % bar] = 1
     s.p["CoyotePad/Pb%s_Stretch" % bar] = stretch
     s.frames(frames)
@@ -185,23 +190,34 @@ def let_go(s, bar, frames=5, posed=0):
     s.frames(frames)
 
 
-# ---------------------------------------------------------------- 2. drag bar A, then let go
+def set_level(s, bar, value):
+    """Put a channel at `value` the way the user does: with the +/- buttons (10 per touch)."""
+    for _ in range(value // 10):
+        tap(s, bar + "Plus")
+
+
+# ---------------------------------------------------------------- 2. drag bar A (a boost from 0), then let go
 s = Sim(); s.frames(2)
 s.p["CoyotePad/PbA_IsGrabbed"] = 1
 vals = []
 for i in range(0, 101):
     s.p["CoyotePad/PbA_Stretch"] = i / 100.0
-    s.frames(2)
+    s.frames(20)
     vals.append(s.p["CoyotePad/ValA"])
-check("drag A: monotonic", all(b >= a for a, b in zip(vals, vals[1:])))
-check("drag A: end reaches 200 (stretch>=0.97)", vals[-1] == 200, vals[-1])
-check("drag A: middle (stretch .5) ~100", 97 <= vals[50] <= 103, vals[50])
-check("drag A: stays 0 inside the dead zone (stretch<=0.03)", all(v == 0 for v in vals[:4]), vals[:5])
-s.p["CoyotePad/PbA_Stretch"] = 1.0; s.frames(3)
+check("drag A from 0: monotonic", all(b >= a for a, b in zip(vals, vals[1:])))
+check("drag A from 0: the end of the bar gives +30, NOT 200", vals[-1] == 30, vals[-1])
+check("drag A from 0: never more than +30 anywhere on the bar", max(vals) == 30, max(vals))
+check("drag A from 0: the middle (stretch .5) is about +15", 13 <= vals[50] <= 17, vals[50])
+check("drag A from 0: stays 0 inside the dead zone (stretch<=0.03)", all(v == 0 for v in vals[:4]), vals[:5])
+check("drag A from 0: moves in steps of 2", all(v % 2 == 0 for v in vals), sorted(set(vals)))
+s.p["CoyotePad/PbA_Stretch"] = 1.0; s.frames(30)
 o = s.display()
-check("drag A: plate '200' and marker at the right end while held", text_bar(o, "A") == "200" and abs(o.get(("Container/Content/A_Handle", "m_LocalPosition.x")) - BAR_X1) < 1e-6)
+check("drag A: plate ' 30' and the marker at the END of the bar (the bar is the boost, 0 ... +30) while held",
+      text_bar(o, "A") == " 30" and abs(o.get(("Container/Content/A_Handle", "m_LocalPosition.x")) - BAR_X1) < 1e-6,
+      (text_bar(o, "A"), o.get(("Container/Content/A_Handle", "m_LocalPosition.x"))))
+check("drag A: CoyoteA follows (30/200) while held", abs(s.p["CoyoteA"] - 30 / 200.0) < 1e-6, s.p["CoyoteA"])
 let_go(s, "A")
-check("let go of A: the value drops to 0", s.p["CoyotePad/ValA"] == 0, s.p["CoyotePad/ValA"])
+check("let go of A: the value drops back to 0 (what it was)", s.p["CoyotePad/ValA"] == 0, s.p["CoyotePad/ValA"])
 check("let go of A: CoyoteA = 0 (OSC)", s.p["CoyoteA"] == 0, s.p["CoyoteA"])
 check("let go of A: B untouched", s.p["CoyotePad/ValB"] == 0 and s.p["CoyoteB"] == 0)
 o = s.display()
@@ -213,29 +229,30 @@ s = Sim(); s.frames(2)
 grab(s, "A", 0.025, frames=30)
 check("a small pull (inside the dead zone) does not change the value", s.p["CoyotePad/ValA"] == 0, s.p["CoyotePad/ValA"])
 
-# posing (locking the grip in place) keeps the value until the pose is released
+# posing (locking the grip in place) keeps the boost until the pose is released, which gives the old value back
 s = Sim(); s.frames(2)
 grab(s, "A", 0.5)
 v = s.p["CoyotePad/ValA"]
 s.p["CoyotePad/PbA_IsPosed"] = 1; s.frames(2)
 let_go(s, "A", frames=60, posed=1)
-check("posed grip keeps the value after letting go", v > 90 and s.p["CoyotePad/ValA"] == v, (v, s.p["CoyotePad/ValA"]))
+check("posed grip keeps its boost after letting go", 12 <= v <= 16 and s.p["CoyotePad/ValA"] == v, (v, s.p["CoyotePad/ValA"]))
 check("posed grip: CoyoteA keeps following", abs(s.p["CoyoteA"] - v / 200.0) < 1e-6)
 s.p["CoyotePad/PbA_IsPosed"] = 0; s.p["CoyotePad/PbA_Stretch"] = 0.0; s.frames(5)
-check("releasing the pose sets the value to 0", s.p["CoyotePad/ValA"] == 0, s.p["CoyotePad/ValA"])
+check("releasing the pose gives the old value back (0)", s.p["CoyotePad/ValA"] == 0, s.p["CoyotePad/ValA"])
 
 # ---------------------------------------------------------------- 3. A and B together, intermediate values
 s = Sim(); s.frames(2)
-grab(s, "A", 0.25, frames=0)
-grab(s, "B", 0.49, frames=3)
-check("A~47 B~98 independent", abs(s.p["CoyotePad/ValA"] - 47) <= 2 and abs(s.p["CoyotePad/ValB"] - 98) <= 2, (s.p["CoyotePad/ValA"], s.p["CoyotePad/ValB"]))
+grab(s, "A", 0.25)
+grab(s, "B", 0.49)
+check("A~+7 B~+14 independent", 5 <= s.p["CoyotePad/ValA"] <= 9 and 12 <= s.p["CoyotePad/ValB"] <= 16, (s.p["CoyotePad/ValA"], s.p["CoyotePad/ValB"]))
 check("CoyoteA=ValA/200 and CoyoteB=ValB/200", abs(s.p["CoyoteA"] - s.p["CoyotePad/ValA"] / 200) < 1e-6 and abs(s.p["CoyoteB"] - s.p["CoyotePad/ValB"] / 200) < 1e-6)
 o = s.display()
 check("plate shows the same values", text_bar(o, "A").strip() == str(int(s.p["CoyotePad/ValA"])) and text_bar(o, "B").strip() == str(int(s.p["CoyotePad/ValB"])), (text_bar(o, "A"), text_bar(o, "B")))
+b_boost = s.p["CoyotePad/ValB"]
 let_go(s, "A")
-check("letting go of A leaves B alone", s.p["CoyotePad/ValA"] == 0 and abs(s.p["CoyotePad/ValB"] - 98) <= 2)
+check("letting go of A leaves B alone", s.p["CoyotePad/ValA"] == 0 and s.p["CoyotePad/ValB"] == b_boost, (s.p["CoyotePad/ValA"], s.p["CoyotePad/ValB"]))
 let_go(s, "B")
-check("letting go of B zeroes B", s.p["CoyotePad/ValB"] == 0 and s.p["CoyoteB"] == 0)
+check("letting go of B gives B its old value (0)", s.p["CoyotePad/ValB"] == 0 and s.p["CoyoteB"] == 0)
 
 # ---------------------------------------------------------------- 4. frequency (one step per touch)
 s = Sim(); s.frames(2)
@@ -309,16 +326,183 @@ s = Sim(); s.frames(2)
 s.p["CoyotePad/ValA"] = 120; s.frames(3)
 grab(s, "A", 0.0, frames=5)
 check("grab without pulling keeps the value (120)", s.p["CoyotePad/ValA"] == 120, s.p["CoyotePad/ValA"])
-s.p["CoyotePad/PbA_Stretch"] = 0.5; s.frames(3)
-check("pulling, the value follows the stretch (~100)", 97 <= s.p["CoyotePad/ValA"] <= 103, s.p["CoyotePad/ValA"])
-s.p["CoyotePad/PbA_Stretch"] = 0.005; s.frames(3)
-check("dragging back to rest gives 0", s.p["CoyotePad/ValA"] == 0, s.p["CoyotePad/ValA"])
+s.p["CoyotePad/PbA_Stretch"] = 0.5; s.frames(BOOST_FRAMES)
+check("pulling to the middle adds about 15 to the 120", 132 <= s.p["CoyotePad/ValA"] <= 136, s.p["CoyotePad/ValA"])
+s.p["CoyotePad/PbA_Stretch"] = 0.005; s.frames(BOOST_FRAMES)
+check("dragging back to rest gives the value it had (120)", s.p["CoyotePad/ValA"] == 120, s.p["CoyotePad/ValA"])
 let_go(s, "A")
-check("letting go keeps 0", s.p["CoyotePad/ValA"] == 0)
+check("letting go keeps 120", s.p["CoyotePad/ValA"] == 120)
 s = Sim(); s.frames(2)
 tap(s, "APlus"); tap(s, "APlus")
 grab(s, "A", 0.0, frames=4); let_go(s, "A")
 check("grab and release without pulling leaves a value set with the buttons (20)", s.p["CoyotePad/ValA"] == 20, s.p["CoyotePad/ValA"])
+
+# ---------------------------------------------------------------- 6b2. THE BOOST: the slider adds at most +30 to what is already set
+s = Sim(); s.frames(2)
+set_level(s, "A", 50)
+check("setup: 5 touches of + give 50", s.p["CoyotePad/ValA"] == 50, s.p["CoyotePad/ValA"])
+grab(s, "A", 1.0)
+check("boost: 50 + a full pull = 80 (the example that was asked for)", s.p["CoyotePad/ValA"] == 80, s.p["CoyotePad/ValA"])
+check("boost: CoyoteA = 80/200 while held", abs(s.p["CoyoteA"] - 80 / 200.0) < 1e-6, s.p["CoyoteA"])
+o = s.display()
+check("boost: the plate shows 80", text_bar(o, "A") == " 80", text_bar(o, "A"))
+s.frames(600)
+check("boost: holding the full pull for 10 s stays at 80", s.p["CoyotePad/ValA"] == 80, s.p["CoyotePad/ValA"])
+s.p["CoyotePad/PbA_Stretch"] = 5.0; s.frames(60)
+check("boost: a stretch far past the end of the bar still gives 80", s.p["CoyotePad/ValA"] == 80, s.p["CoyotePad/ValA"])
+let_go(s, "A")
+check("boost: letting go gives 50 back", s.p["CoyotePad/ValA"] == 50, s.p["CoyotePad/ValA"])
+check("boost: CoyoteA is back to 50/200", abs(s.p["CoyoteA"] - 50 / 200.0) < 1e-6, s.p["CoyoteA"])
+
+# a jump from rest to the end in one frame never goes past +30, not even for a frame
+s = Sim(); s.frames(2)
+set_level(s, "A", 100)
+s.p["CoyotePad/PbA_IsGrabbed"] = 1; s.p["CoyotePad/PbA_Stretch"] = 1.0
+seen = []
+for _ in range(40):
+    s.frames(1)
+    seen.append(s.p["CoyotePad/ValA"])
+check("boost: a jump to the end of the bar never shows more than 130", max(seen) == 130 and min(seen) >= 100, (min(seen), max(seen)))
+check("boost: ... and it gets there within 20 frames", seen.index(130) <= 20, seen.index(130))
+check("boost: the value only goes up by steps of 2 on the way", all(b - a in (0, 2) for a, b in zip(seen, seen[1:])), seen[:20])
+let_go(s, "A")
+check("boost: back to 100", s.p["CoyotePad/ValA"] == 100)
+
+# near the ceiling: the clamp at 200 holds, and letting go still gives the exact old value (both channels: each has its own chain)
+for bar in "AB":
+    for base in (180, 190, 200):
+        s = Sim(); s.frames(2)
+        s.p["CoyotePad/Val" + bar] = base; s.frames(3)
+        s.p["CoyotePad/Pb%s_IsGrabbed" % bar] = 1; s.p["CoyotePad/Pb%s_Stretch" % bar] = 1.0
+        peak, peak_osc = 0, 0.0
+        for _ in range(BOOST_FRAMES):
+            s.frames(1)
+            peak, peak_osc = max(peak, s.p["CoyotePad/Val" + bar]), max(peak_osc, s.p["Coyote" + bar])
+        held = s.p["CoyotePad/Val" + bar]
+        check("ceiling: %s base %d: the value (and Coyote%s) never pass 200 / 1.0, not even for a frame" % (bar, base, bar), peak <= 200 and peak_osc <= 1.0, (peak, peak_osc))
+        let_go(s, bar)
+        check("ceiling: %s base %d + a full pull is %d (never above 200)" % (bar, base, min(200, base + 30)), held == min(200, base + 30), held)
+        check("ceiling: %s ... and letting go gives back exactly %d" % (bar, base), s.p["CoyotePad/Val" + bar] == base, s.p["CoyotePad/Val" + bar])
+
+# moving the grip up, down and back to rest in one grab does not change the value that will come back
+s = Sim(); s.frames(2)
+set_level(s, "A", 40)
+grab(s, "A", 1.0)
+s.p["CoyotePad/PbA_Stretch"] = 0.5; s.frames(BOOST_FRAMES)
+mid = s.p["CoyotePad/ValA"]
+s.p["CoyotePad/PbA_Stretch"] = 0.0; s.frames(BOOST_FRAMES)
+check("up, down, to rest in one grab: back at 40 while still held", s.p["CoyotePad/ValA"] == 40 and 52 <= mid <= 56, (mid, s.p["CoyotePad/ValA"]))
+s.p["CoyotePad/PbA_Stretch"] = 1.0; s.frames(BOOST_FRAMES)
+let_go(s, "A")
+check("... and after another pull, letting go still gives 40", s.p["CoyotePad/ValA"] == 40, s.p["CoyotePad/ValA"])
+
+# many grabs in a row do not creep upwards (the old value is a snapshot, not a running total)
+s = Sim(); s.frames(2)
+set_level(s, "A", 60)
+for i in range(40):
+    grab(s, "A", (i % 10 + 1) / 10.0, frames=25)
+    let_go(s, "A", frames=6)
+check("40 grabs and releases leave the value at exactly 60", s.p["CoyotePad/ValA"] == 60, s.p["CoyotePad/ValA"])
+check("... and CoyoteA at 60/200", abs(s.p["CoyoteA"] - 60 / 200.0) < 1e-6)
+
+# the -/+ buttons do nothing while the slider is held (the slider owns the value then)
+s = Sim(); s.frames(2)
+set_level(s, "A", 50)
+grab(s, "A", 1.0)
+tap(s, "APlus"); tap(s, "APlus", "Others"); tap(s, "AMinus")
+check("buttons ignored while the slider is held", s.p["CoyotePad/ValA"] == 80, s.p["CoyotePad/ValA"])
+let_go(s, "A")
+check("... and nothing they did sticks: 50 comes back", s.p["CoyotePad/ValA"] == 50, s.p["CoyotePad/ValA"])
+tap(s, "APlus")
+check("the buttons work again after letting go (60)", s.p["CoyotePad/ValA"] == 60, s.p["CoyotePad/ValA"])
+s = Sim(); s.frames(2)
+set_level(s, "A", 50)
+grab(s, "A", 0.6)
+s.p["CoyotePad/PbA_IsPosed"] = 1; s.frames(2)
+let_go(s, "A", frames=20, posed=1)
+before = s.p["CoyotePad/ValA"]
+tap(s, "APlus")
+check("buttons are also ignored while the grip is posed", s.p["CoyotePad/ValA"] == before, (before, s.p["CoyotePad/ValA"]))
+
+# STOP / Zero while the slider is held: the old value must not come back when it is let go
+s = Sim(); s.frames(2)
+set_level(s, "A", 70)
+grab(s, "A", 1.0)
+s.p["CoyotePad/Zero"] = 1; s.frames(4); s.p["CoyotePad/Zero"] = 0; s.frames(4)
+check("Zero while held: the panel shows 0", s.p["CoyotePad/ValA"] == 0, s.p["CoyotePad/ValA"])
+let_go(s, "A")
+check("Zero while held: letting go does NOT bring 70 back", s.p["CoyotePad/ValA"] == 0 and s.p["CoyoteA"] == 0, (s.p["CoyotePad/ValA"], s.p["CoyoteA"]))
+s = Sim(); s.frames(2)
+set_level(s, "B", 70)
+grab(s, "B", 1.0)
+s.p["CoyoteStop"] = 1; s.frames(4); s.p["CoyoteStop"] = 0; s.frames(4)
+let_go(s, "B")
+check("STOP while held: letting go does NOT bring 70 back", s.p["CoyotePad/ValB"] == 0 and s.p["CoyoteB"] == 0, (s.p["CoyotePad/ValB"], s.p["CoyoteB"]))
+
+# ... and while the grip is still held (or posed) and keeps moving, which is what someone else holding it can do, the value stays
+# at 0 as well: the Latched state adds nothing until the grip is let go. Then everything works again.
+for trig, label in (("CoyotePad/Zero", "Zero channels"), ("CoyoteStop", "STOP")):
+    for pose in (0, 1):
+        s = Sim(); s.frames(2)
+        set_level(s, "A", 70); set_level(s, "B", 40)
+        grab(s, "A", 1.0)
+        if pose:                                    # posed: locked where it is, the grip itself is not held any more
+            s.p["CoyotePad/PbA_IsPosed"] = 1; s.p["CoyotePad/PbA_IsGrabbed"] = 0; s.frames(3)
+        s.p[trig] = 1; s.frames(4); s.p[trig] = 0; s.frames(4)
+        tag = "%s while %s" % (label, "posed" if pose else "held")
+        now = (s.p["CoyotePad/ValA"], s.p["CoyotePad/ValB"], s.p["CoyotePad/BoostA_f"])
+        check(tag + ": both channels show 0 and the marker is back at 0", now == (0, 0, 0), now)
+        if not pose:
+            seen = []
+            for st in (1.0, 0.9, 0.5, 0.0, 0.7, 1.0, 5.0):
+                s.p["CoyotePad/PbA_Stretch"] = st; s.frames(25)
+                seen.append((s.p["CoyotePad/ValA"], s.p["CoyoteA"], s.p["CoyotePad/BoostA_f"]))
+            check(tag + ": moving the grip afterwards adds nothing (value, CoyoteA and marker stay 0)", all(x == (0, 0, 0) for x in seen), seen)
+        let_go(s, "A")
+        check(tag + ": letting go keeps 0", s.p["CoyotePad/ValA"] == 0 and s.p["CoyoteA"] == 0, (s.p["CoyotePad/ValA"], s.p["CoyoteA"]))
+        grab(s, "A", 1.0)
+        check(tag + ": a new grab afterwards boosts from 0 (+30)", s.p["CoyotePad/ValA"] == 30, s.p["CoyotePad/ValA"])
+        let_go(s, "A")
+        check(tag + ": ... and letting go gives 0 back", s.p["CoyotePad/ValA"] == 0, s.p["CoyotePad/ValA"])
+        tap(s, "APlus")
+        check(tag + ": the buttons work again (10)", s.p["CoyotePad/ValA"] == 10, s.p["CoyotePad/ValA"])
+
+# a grip that is let go again right away (a one-frame touch of the knob) must not leave a stale snapshot behind: a -/+ touch
+# landing in that frame counts, and the next boost starts from the new level
+for button, delta in (("Minus", -10), ("Plus", 10)):
+    s = Sim(); s.frames(2)
+    set_level(s, "A", 50)
+    s.p["CoyotePad/PbA_IsGrabbed"] = 1; s.p["CoyotePad/PbA_Stretch"] = 1.0; s.frames(1)
+    s.p["CoyotePad/PbA_IsGrabbed"] = 0; s.p["CoyotePad/PbA_Stretch"] = 0.0
+    s.p["CoyotePad/A%s_TouchSelf" % button] = 1; s.frames(6)
+    s.p["CoyotePad/A%s_TouchSelf" % button] = 0; s.frames(6)
+    lvl = 50 + delta
+    check("one-frame grab, then a %s touch: the touch counts (%d)" % (button, lvl), s.p["CoyotePad/ValA"] == lvl, s.p["CoyotePad/ValA"])
+    grab(s, "A", 1.0)
+    check("... the next boost starts from the NEW level (%d)" % (lvl + 30), s.p["CoyotePad/ValA"] == lvl + 30, s.p["CoyotePad/ValA"])
+    let_go(s, "A")
+    check("... and letting go gives the new level back (%d)" % lvl, s.p["CoyotePad/ValA"] == lvl, s.p["CoyotePad/ValA"])
+s = Sim(); s.frames(2)
+set_level(s, "A", 50)
+for n in (1, 2, 3):
+    s.p["CoyotePad/PbA_IsGrabbed"] = 1; s.p["CoyotePad/PbA_Stretch"] = 1.0; s.frames(n)
+    s.p["CoyotePad/PbA_IsGrabbed"] = 0; s.p["CoyotePad/PbA_Stretch"] = 0.0; s.frames(6)
+check("grabs that last only 1, 2 and 3 frames leave the value at 50", s.p["CoyotePad/ValA"] == 50, s.p["CoyotePad/ValA"])
+
+# the two channels are independent, each boosts its own value
+s = Sim(); s.frames(2)
+set_level(s, "A", 30); set_level(s, "B", 20)
+grab(s, "A", 1.0); grab(s, "B", 1.0)
+check("A: 30 + 30 = 60 and B: 20 + 30 = 50 at the same time", (s.p["CoyotePad/ValA"], s.p["CoyotePad/ValB"]) == (60, 50), (s.p["CoyotePad/ValA"], s.p["CoyotePad/ValB"]))
+let_go(s, "A")
+check("letting go of A only: A is 30 again, B keeps its boost (50)", (s.p["CoyotePad/ValA"], s.p["CoyotePad/ValB"]) == (30, 50), (s.p["CoyotePad/ValA"], s.p["CoyotePad/ValB"]))
+let_go(s, "B")
+check("letting go of B: B is 20 again", (s.p["CoyotePad/ValA"], s.p["CoyotePad/ValB"]) == (30, 20), (s.p["CoyotePad/ValA"], s.p["CoyotePad/ValB"]))
+
+# the controller really keeps the remembered value in a local (not synced) Int
+names = {x["n"]: x["t"] for x in J["params"]}
+check("the remembered values BaseA/BaseB exist as Int parameters", names.get("CoyotePad/BaseA") == "Int" and names.get("CoyotePad/BaseB") == "Int", names)
+
 s = Sim(); s.frames(2)
 s.p["CoyotePad/Anchor"] = 1; s.frames(3)
 check("locked: Anchor=1", s.p["CoyotePad/Anchor"] == 1)
@@ -328,6 +512,113 @@ s.p["CoyotePad/Anchor"] = 1; s.frames(3)
 check("after showing, locking works again", s.p["CoyotePad/Anchor"] == 1)
 s.p["CoyotePad/Show"] = 0; s.frames(3); s.p["CoyotePad/Show"] = 1; s.frames(4)
 check("hiding and showing again unlocks once more", s.p["CoyotePad/Anchor"] == 0)
+
+# ---------------------------------------------------------------- 6d. random play: the boost's rules hold on EVERY frame
+# Random grabs, pulls (also past the end of the bar), poses, releases and button touches on both channels. The rules, checked
+# after every single frame: a held channel is never below the value it had when it was grabbed nor more than +30 above it
+# (nor above 200); a free channel is exactly at its level; the buttons change a free channel by 10 and a held one not at all;
+# CoyoteA/B never pass 1.0. Zero channels / STOP zero both channels and a channel that is held stays at 0 until it is let go;
+# a one-frame touch of the knob followed by a -/+ touch counts like any other touch.
+import random
+
+rnd = random.Random(20261024)
+violations = []
+for trial in range(40):
+    s = Sim(); s.frames(2)
+    base = {"A": 0, "B": 0}
+    held = {"A": False, "B": False}
+    posed = {"A": False, "B": False}
+    latched = {"A": False, "B": False}
+
+    def watch(n):
+        for _ in range(n):
+            before = {c: s.p["CoyotePad/Val" + c] for c in "AB"}
+            s.frames(1)
+            for c in "AB":
+                v = s.p["CoyotePad/Val" + c]
+                lo = base[c]
+                hi = (0 if latched[c] else min(200, base[c] + 30)) if held[c] else base[c]
+                # CoyoteA/B are copied from the value the panel had at the end of the PREVIOUS frame (the Mirror layer runs first):
+                # exactly one frame behind (after a release or a Zero they still show the old value for one frame), never above 1.0
+                if not (lo <= v <= hi) or s.p["Coyote" + c] > 1.0 + 1e-9 or abs(s.p["Coyote" + c] - before[c] / 200.0) > 1e-9:
+                    violations.append((trial, c, v, lo, hi, held[c]))
+
+    for step in range(120):
+        c = rnd.choice("AB")
+        act = rnd.random()
+        if rnd.random() < 0.06:                              # Zero channels or STOP: both channels go to 0, a held one stays there
+            trig = rnd.choice(["CoyotePad/Zero", "CoyoteStop"])
+            s.p[trig] = 1
+            for cc in "AB":
+                base[cc] = 0
+                if held[cc]:
+                    latched[cc] = True
+            watch(4)
+            s.p[trig] = 0
+            watch(4)
+            continue
+        if not held[c]:
+            if 0.5 <= act < 0.62:                            # a one-frame touch of the knob, then a -/+ touch right after it
+                which, who = rnd.choice(["Plus", "Minus"]), rnd.choice(["Self", "Others"])
+                s.p["CoyotePad/Pb%s_IsGrabbed" % c] = 1
+                s.p["CoyotePad/Pb%s_Stretch" % c] = rnd.choice([0.0, 0.5, 1.0])
+                s.frames(1)
+                s.p["CoyotePad/Pb%s_IsGrabbed" % c] = 0
+                s.p["CoyotePad/Pb%s_Stretch" % c] = 0.0
+                n = "CoyotePad/%s%s_Touch%s" % (c, which, who)
+                s.p[n] = 1; s.frames(6); s.p[n] = 0; s.frames(6)
+                if which == "Plus" and base[c] < 191:
+                    base[c] += 10
+                if which == "Minus" and base[c] > 9:
+                    base[c] -= 10
+                if s.p["CoyotePad/Val" + c] != base[c]:
+                    violations.append((trial, c, "one-frame grab + button", s.p["CoyotePad/Val" + c], base[c]))
+            elif act < 0.5:                                  # a button: one step of 10 on a free channel
+                which = rnd.choice(["Plus", "Minus"])
+                tap(s, c + which, rnd.choice(["Self", "Others"]))
+                if which == "Plus" and base[c] < 191:
+                    base[c] += 10
+                if which == "Minus" and base[c] > 9:
+                    base[c] -= 10
+                if s.p["CoyotePad/Val" + c] != base[c]:
+                    violations.append((trial, c, "button", s.p["CoyotePad/Val" + c], base[c]))
+            else:                                            # grab, with any stretch, also one far past the end of the bar
+                s.p["CoyotePad/Pb%s_IsGrabbed" % c] = 1
+                s.p["CoyotePad/Pb%s_Stretch" % c] = rnd.choice([0.0, 0.02, 0.2, 0.5, 0.8, 1.0, 3.0, rnd.random()])
+                held[c] = True
+                watch(25)
+        else:
+            if act < 0.4:                                    # move the grip
+                s.p["CoyotePad/Pb%s_Stretch" % c] = rnd.choice([0.0, 0.03, 0.1, 0.5, 0.9, 1.0, 5.0, rnd.random()])
+                watch(25)
+            elif act < 0.6:                                  # a button touched while the slider is held: nothing happens
+                s.p["CoyotePad/%s%s_TouchSelf" % (c, rnd.choice(["Plus", "Minus"]))] = 1
+                watch(6)
+                for b in ("Plus", "Minus"):
+                    s.p["CoyotePad/%s%s_TouchSelf" % (c, b)] = 0
+                watch(6)
+            elif act < 0.7 and not posed[c]:                 # pose the grip (it stays where it is), then let go of it
+                s.p["CoyotePad/Pb%s_IsPosed" % c] = 1
+                posed[c] = True
+                watch(3)
+                s.p["CoyotePad/Pb%s_IsGrabbed" % c] = 0
+                watch(10)
+            else:                                            # let go for good: the old value comes back
+                s.p["CoyotePad/Pb%s_IsGrabbed" % c] = 0
+                s.p["CoyotePad/Pb%s_IsPosed" % c] = 0
+                s.p["CoyotePad/Pb%s_Stretch" % c] = 0.0
+                held[c] = False
+                posed[c] = False
+                latched[c] = False
+                watch(8)
+    for c in "AB":                                           # at the end everything is let go: both channels sit at their levels
+        s.p["CoyotePad/Pb%s_IsGrabbed" % c] = 0
+        s.p["CoyotePad/Pb%s_IsPosed" % c] = 0
+        s.p["CoyotePad/Pb%s_Stretch" % c] = 0.0
+        held[c] = False
+        latched[c] = False
+    watch(10)
+check("random play, 40 sessions x 120 actions: the boost rules hold on every frame", not violations, violations[:4])
 
 # ---------------------------------------------------------------- 6c. complete vectors (VRChat quirk: a missing component becomes 0)
 s = Sim(); s.frames(3)
@@ -358,10 +649,37 @@ for n in range(0, 201):
     expB = "%3d" % (200 - n) if (200 - n) >= 100 else (("  %d" % (200 - n)) if (200 - n) < 10 else " %d" % (200 - n))
     if text_bar(o, "A") != expA or text_bar(o, "B") != expB:
         bad.append((n, text_bar(o, "A"), expA, text_bar(o, "B"), expB))
-    hx = o.get(("Container/Content/A_Handle", "m_LocalPosition.x"))
-    if abs(hx - (BAR_X0 + (BAR_X1 - BAR_X0) * n / 200.0)) > 1e-6:
-        bad.append(("handle", n, hx))
-check("exhaustive 0..200: A/B digits and marker correct", not bad, bad[:5])
+check("exhaustive 0..200: A/B digits correct", not bad, bad[:5])
+# the thin marker on the bar shows the BOOST (printed scale 0 ... +30), whatever the level is
+bad = []
+for b in range(0, 31):
+    s = Sim(); s.frames(1)
+    s.p["CoyotePad/ValA"] = 120; s.p["CoyotePad/ValB"] = 40
+    s.p["CoyotePad/BoostA_f"] = b
+    s.p["CoyotePad/BoostB_f"] = 30 - b
+    s.frames(3)
+    o = s.display()
+    for handle, boost in (("A_Handle", b), ("B_Handle", 30 - b)):
+        hx = o.get(("Container/Content/" + handle, "m_LocalPosition.x"))
+        if hx is None or abs(hx - (BAR_X0 + (BAR_X1 - BAR_X0) * boost / 30.0)) > 1e-6:
+            bad.append((handle, boost, hx))
+check("exhaustive boost 0..30: the markers of A and B sit at boost/30 of the bar", not bad, bad[:5])
+# ...and on the real thing: a level of 100 with the slider pulled half way puts the marker half way along the BAR, not at 100/200
+s = Sim(); s.frames(2)
+set_level(s, "A", 100)
+o = s.display()
+check("level 100, slider at rest: the marker is at the left end of the bar (it is not a level marker)",
+      abs(o.get(("Container/Content/A_Handle", "m_LocalPosition.x")) - BAR_X0) < 1e-6, o.get(("Container/Content/A_Handle", "m_LocalPosition.x")))
+grab(s, "A", 0.5)
+o = s.display()
+boost = s.p["CoyotePad/ValA"] - 100
+check("level 100, slider pulled half way: the marker follows the boost (%d of 30), the plate shows the level" % boost,
+      12 <= boost <= 16 and abs(o.get(("Container/Content/A_Handle", "m_LocalPosition.x")) - (BAR_X0 + (BAR_X1 - BAR_X0) * boost / 30.0)) < 1e-6
+      and text_bar(o, "A") == "%3d" % (100 + boost), (boost, o.get(("Container/Content/A_Handle", "m_LocalPosition.x")), text_bar(o, "A")))
+let_go(s, "A")
+o = s.display()
+check("... and back at the left end of the bar when let go (the plate shows 100 again)",
+      abs(o.get(("Container/Content/A_Handle", "m_LocalPosition.x")) - BAR_X0) < 1e-6 and text_bar(o, "A") == "100", text_bar(o, "A"))
 badf = []
 for f in range(10, 101, 10):
     s = Sim(); s.frames(1)

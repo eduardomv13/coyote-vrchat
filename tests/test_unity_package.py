@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "unity" / "io.github.eduardomv13.coyote-panel"
 LAYOUT_CS = PKG / "Editor" / "PanelLayout.cs"
 TEXTURE_PY = PKG / "Tools~" / "make_textures.py"
+EXAMPLE = PKG / "Tools~" / "ctrl.example.json"
 
 SCALARS = ["PW", "PH", "ROW_A", "ROW_B", "ROW_F", "BAR_X0", "BAR_X1", "MINUS_X", "PLUS_X",
            "CELL_W", "CELL_H", "BTN_DN_X", "BTN_UP_X"]
@@ -29,6 +30,13 @@ def cs_scalar(src: str, name: str) -> float:
     if not m:
         raise AssertionError("constant %s not found in PanelLayout.cs" % name)
     return float(m.group(1))
+
+
+def cs_int(src: str, name: str) -> int:
+    m = re.search(r"\b%s\s*=\s*(\d+)(?![\d.f])" % re.escape(name), src)
+    if not m:
+        raise AssertionError("integer constant %s not found in PanelLayout.cs" % name)
+    return int(m.group(1))
 
 
 def cs_array(src: str, name: str):
@@ -124,14 +132,86 @@ class LayoutMatchesTextureScript(unittest.TestCase):
             self.assertEqual(cs_array(cs, name), [float(x) for x in py[name]], name)
 
 
+class BoostCap(unittest.TestCase):
+    """The +30 cap of the slider is a safety feature. The simulator replays a frozen export of the controller, and Python cannot
+    run the C# builder, so these tie the two together: change a boost constant in PanelLayout.cs and forget to re-export the
+    controller (or to redraw the plate) and one of them fails."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cs = LAYOUT_CS.read_text(encoding="utf-8")
+        cls.boost_max = cs_int(cls.cs, "BOOST_MAX")
+        cls.step = cs_int(cls.cs, "BOOST_STEP")
+        cls.hyst = cs_scalar(cls.cs, "BOOST_HYST")
+        cls.smin = cs_scalar(cls.cs, "STR_SRC_MIN")
+        cls.smax = cs_scalar(cls.cs, "STR_SRC_MAX")
+        cls.export = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+
+    def states(self, channel):
+        layer = next(l for l in self.export["layers"] if l["layer"] == "CoyotePad_Track" + channel)
+        return {s["name"]: s for s in layer["states"]}
+
+    def test_the_cap_is_30(self):
+        # deliberately hard-coded: raising the cap must be a conscious edit of this test as well as of PanelLayout.cs
+        self.assertEqual(self.boost_max, 30)
+        self.assertEqual(self.boost_max % self.step, 0)
+
+    def test_the_export_has_exactly_the_boost_chain_of_the_constants(self):
+        steps = self.boost_max // self.step
+        span = self.smax - self.smin
+        for ch in "AB":
+            states = self.states(ch)
+            base, val, stretch = "CoyotePad/Base" + ch, "CoyotePad/Val" + ch, "CoyotePad/Pb%s_Stretch" % ch
+            boosts = sorted(int(n.split("+")[1]) for n in states if n.startswith("Boost +"))
+            self.assertEqual(boosts, [k * self.step for k in range(steps + 1)], "Boost states of channel " + ch)
+            for k in range(steps + 1):
+                st = states["Boost +%d" % (k * self.step)]
+                drivers = [(d["type"], d["name"], d.get("src") or None, d["value"]) for d in st["drivers"]]
+                expected = [("Copy", val, base, 0)] + ([("Add", val, None, k * self.step)] if k else []) + \
+                           [("Set", "CoyotePad/Boost%s_f" % ch, None, k * self.step)]
+                self.assertEqual(drivers, expected, "%s Boost +%d" % (ch, k * self.step))
+                ups = [t for t in st["transitions"] if t["to"] == "Boost +%d" % ((k + 1) * self.step)]
+                self.assertEqual(len(ups), 1 if k < steps else 0, "%s Boost +%d: up transitions" % (ch, k * self.step))
+                for t in ups:
+                    conds = {(c["p"], c["mode"]): c["thr"] for c in t["conds"]}
+                    self.assertAlmostEqual(conds[(stretch, "Greater")], self.smin + span * ((k + 1) - 0.5 + self.hyst) / steps, places=4)
+                    # the boost stops where base + boost would pass 200
+                    self.assertEqual(conds[(base, "Less")], 201 - self.step * (k + 1))
+
+    def test_zero_and_stop_latch_a_held_grip_and_a_one_frame_grab_changes_nothing(self):
+        for ch in "AB":
+            states = self.states(ch)
+            grabbed, posed = "CoyotePad/Pb%s_IsGrabbed" % ch, "CoyotePad/Pb%s_IsPosed" % ch
+            for name, st in states.items():
+                if name != "Hold" and not name.startswith("Boost +"):
+                    continue
+                latch = sorted(c["p"] for t in st["transitions"] if t["to"] == "Latched" for c in t["conds"] if c["mode"] == "If")
+                self.assertEqual(latch, ["CoyotePad/Zero", "CoyoteStop"], "%s %s: Zero and STOP must latch" % (ch, name))
+            hold = states["Hold"]["transitions"]
+            self.assertEqual(hold[0]["to"], "Idle", "Hold: letting go again comes first")
+            self.assertEqual(sorted((c["p"], c["mode"]) for c in hold[0]["conds"]), sorted([(grabbed, "IfNot"), (posed, "IfNot")]))
+            self.assertTrue(hold[-1]["exit"] and hold[-1]["to"] == "Boost +0", "Hold: the exit-time transition comes last")
+            leave = states["Latched"]["transitions"]
+            self.assertEqual([t["to"] for t in leave], ["Idle"])
+            self.assertEqual(sorted((c["p"], c["mode"]) for c in leave[0]["conds"]), sorted([(grabbed, "IfNot"), (posed, "IfNot")]))
+
+    def test_the_printed_scale_is_the_cap(self):
+        src = TEXTURE_PY.read_text(encoding="utf-8")
+        labels = re.findall(r'\((\d), "(\+?\d+)"\)', src)
+        self.assertEqual(len(labels), 4, "four labels under each bar")
+        self.assertIn("for i in range(4)", src, "four ticks under each bar")
+        for i, text in labels:
+            expected = "0" if int(i) == 0 else "+%d" % (self.boost_max * int(i) // 3)
+            self.assertEqual(text, expected, "label %s of the bar scale" % i)
+
+
 class ControllerSimulator(unittest.TestCase):
     def test_simulator_passes_on_the_example_export(self):
         sim = PKG / "Tools~" / "simulate_controller.py"
-        example = PKG / "Tools~" / "ctrl.example.json"
-        res = subprocess.run([sys.executable, "-I", str(sim), str(example)], capture_output=True, text=True, timeout=120)
+        res = subprocess.run([sys.executable, "-I", str(sim), str(EXAMPLE)], capture_output=True, text=True, timeout=120)
         self.assertEqual(res.returncode, 0, res.stdout[-3000:] + res.stderr[-1000:])
         self.assertIn("FAILURES: 0", res.stdout)
-        self.assertGreaterEqual(res.stdout.count("PASS "), 55)
+        self.assertGreaterEqual(res.stdout.count("PASS "), 137)      # 55 before the boost slider (0.3.0), 99 before the Latched state, 128 before the ceiling was checked on both channels
 
 
 if __name__ == "__main__":

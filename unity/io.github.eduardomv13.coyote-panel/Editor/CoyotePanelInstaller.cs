@@ -152,7 +152,7 @@ namespace CoyotePanel.Editor
             sr.updateWhenOffscreen = false;
             NoShadows(sr);
 
-            // value marker (animated by CoyotePad/ValA|B) - NOT grabbable
+            // boost marker (animated by CoyotePad/BoostA_f|BoostB_f, 0..BOOST_MAX) - NOT grabbable
             Mesh2(content, "A_Handle", assets.cube, assets.matNeedle, new Vector3(BAR_X0, ROW_A, Z_NEEDLE), new Vector3(NEEDLE_W, NEEDLE_H, NEEDLE_D));
             Mesh2(content, "B_Handle", assets.cube, assets.matNeedle, new Vector3(BAR_X0, ROW_B, Z_NEEDLE), new Vector3(NEEDLE_W, NEEDLE_H, NEEDLE_D));
             for (int i = 0; i < 3; i++)
