@@ -4,14 +4,16 @@ Every version has a number and its own [GitHub release](https://github.com/eduar
 `vMAJOR.MINOR.PATCH`). Old releases are never removed or replaced: a new version is a new release. The in-game panel for
 Unity (`unity/`) has its own version number, listed in [its changelog](unity/io.github.eduardomv13.coyote-panel/CHANGELOG.md).
 
-## Unreleased
+## 1.4.0 (2026-11-06)
 
-- **One intensity ceiling per channel, and no global one.** The *Safety limits* card now has a *Channel A ceiling* and a
-  *Channel B ceiling* slider; the old *Intensity ceiling (all sources)* slider is gone. Each ceiling applies to the window,
-  VRChat (OSC, where 1 = that channel's ceiling), the AI and the contact shock, and is written to the Coyote as that
-  channel's soft limit. Settings: `max_intensity_a` and `max_intensity_b` replace `max_intensity`; a settings file that
-  still has `max_intensity` is converted (the old value becomes the ceiling of both channels, or of whichever is already
-  lower), so a limit you had set does not go back to 200. `coyote_status` / `GET /status` show `max_intensity_a` and
+- **A slider for each channel.** The *Safety limits* card now has a *Channel A ceiling* and a *Channel B ceiling* slider
+  (the old single *Intensity ceiling (all sources)* slider is gone), and the new *Intensity balance* card in the *Extras*
+  tab has one slider per channel too. Details below.
+- **One intensity ceiling per channel, and no global one.** Each ceiling applies to the window, VRChat (OSC, where 1 =
+  that channel's ceiling), the AI and the contact shock, and is written to the Coyote as that channel's soft limit.
+  Settings: `max_intensity_a` and `max_intensity_b` replace `max_intensity`; a settings file that still has
+  `max_intensity` is converted (the old value becomes the ceiling of both channels, or of whichever is already lower), so
+  a limit you had set does not go back to 200. `coyote_status` / `GET /status` show `max_intensity_a` and
   `max_intensity_b` instead of `max_intensity`.
 - A contact shock draws each channel's power from that channel's own ceiling, and a channel whose ceiling is 0 is left out
   (and not announced in the chatbox) instead of being announced without delivering anything.
@@ -19,6 +21,7 @@ Unity (`unity/`) has its own version number, listed in [its changelog](unity/io.
   Parameter 2" (the "Pulse intensity balance" of the `BF` command): higher values make low-frequency pulses feel stronger
   at the same intensity. It is saved in the settings (`width_balance_a`, `width_balance_b`), sent to the device on every
   connection and rewritten as soon as you let go of the slider. The AI cannot change it.
+- 327 automated tests (it was 298).
 
 ## 1.3.0 (2026-10-21)
 
