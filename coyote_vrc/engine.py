@@ -93,8 +93,8 @@ class Engine:
 
     def configure(self, **kw) -> set:
         changed = self.control.configure(**kw)
-        if "max_intensity" in changed:
-            self.link.bf_dirty = True  # rewrite the soft limit (BF) on the device
+        if changed & {"max_intensity_a", "max_intensity_b", "width_balance_a", "width_balance_b"}:
+            self.link.bf_dirty = True  # rewrite the soft limits and the balances (BF) on the device
             self.link.poke()
         if changed:
             self.save()

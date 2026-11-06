@@ -159,18 +159,19 @@ class ShockTrigger:
         busy = [c for c in chans if ctl.shock_active(c)]
         if busy:
             return refuse("a shock is already running on " + "+".join(busy))
-        cap = ctl.cap("gui")
-        if cap <= 0:
+        caps = {c: ctl.cap("gui", c) for c in chans}
+        chans = "".join(c for c in chans if caps[c] > 0)    # a channel whose ceiling is 0 cannot shock, so it is not announced
+        if not chans:
             return refuse("the intensity ceiling is 0")
 
         plan = self._draw(chans)
-        levels = {c: (max(1, int(round(plan[c][0] * cap / 100.0))), plan[c][1]) for c in chans}
+        levels = {c: (max(1, int(round(plan[c][0] * caps[c] / 100.0))), plan[c][1]) for c in chans}
         try:
             res = ctl.start_shocks(levels, source)
         except ControlError as exc:
             return refuse(str(exc))
         real = {c: (plan[c][0], int(res[c]["seconds"])) for c in chans}
-        self.last = ", ".join(f"{c} {plan[c][0]}% ({res[c]['applied']:.0f} of {cap}) for {res[c]['seconds']:.0f} s"
+        self.last = ", ".join(f"{c} {plan[c][0]}% ({res[c]['applied']:.0f} of {caps[c]}) for {res[c]['seconds']:.0f} s"
                               for c in chans)
         ctl.log("Shock trigger: drew " + describe(real))
         self._announce(real)

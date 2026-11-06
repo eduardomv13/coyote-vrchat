@@ -43,7 +43,7 @@ class Mapping(unittest.TestCase):
         self.assertEqual(snap["B"]["target"], 100.0)
 
     def test_osc_full_scale_follows_cap(self):
-        c, _, _ = make(max_intensity=120)
+        c, _, _ = make(max_intensity_a=120)
         c.set_fraction("A", 1.0, "osc")
         self.assertEqual(c.snapshot()["channels"]["A"]["target"], 120.0)
 
@@ -64,6 +64,91 @@ class Mapping(unittest.TestCase):
         for bad in (None, "abc", float("nan"), float("inf"), True):
             with self.assertRaises(ControlError, msg=repr(bad)):
                 c.set_intensity("A", bad, "gui")
+
+
+class PerChannelCeiling(unittest.TestCase):
+    def test_each_channel_clamps_to_its_own_ceiling(self):
+        c, _, _ = make(max_intensity_a=60, max_intensity_b=120)
+        self.assertEqual(c.set_intensity("A", 150, "gui")["applied"], 60.0)
+        self.assertEqual(c.set_intensity("B", 150, "gui")["applied"], 120.0)
+
+    def test_ab_reports_the_lowest_and_applies_each(self):
+        c, _, _ = make(max_intensity_a=60, max_intensity_b=120)
+        r = c.set_intensity("AB", 100, "gui")
+        self.assertEqual((r["applied"], r["clamped"], r["limit"]), (60.0, True, 60))
+        self.assertEqual(r["per_channel"], {"A": 60.0, "B": 100.0})
+        snap = c.snapshot()["channels"]
+        self.assertEqual((snap["A"]["target"], snap["B"]["target"]), (60.0, 100.0))
+
+    def test_osc_full_scale_follows_the_channel_ceiling(self):
+        c, _, _ = make(max_intensity_a=90)
+        c.set_fraction("A", 1.0, "osc")
+        c.set_fraction("B", 1.0, "osc")
+        snap = c.snapshot()["channels"]
+        self.assertEqual((snap["A"]["target"], snap["B"]["target"]), (90.0, 200.0))
+
+    def test_lowering_a_channel_ceiling_cuts_it_at_once(self):
+        c, _, clock = make()
+        c.set_intensity("AB", 150, "gui")
+        for _ in range(30):
+            clock.t += 0.1
+            c.step(0.1)
+        c.configure(max_intensity_b=40)
+        snap = c.snapshot()["channels"]
+        self.assertEqual((snap["A"]["target"], snap["B"]["target"], snap["B"]["output"]), (150.0, 40.0, 40.0))
+        self.assertEqual(c.step(0.1).intensity[1], 40)
+
+    def test_step_never_exceeds_the_channel_ceiling_even_in_a_shock(self):
+        c, _, clock = make(max_intensity_a=30)
+        c.start_shocks({"A": (100, 5), "B": (100, 5)})
+        for _ in range(20):
+            clock.t += 0.1
+            f = c.step(0.1)
+        self.assertEqual(f.intensity, (30, 100))
+
+    def test_configure_clamps_and_snapshot_shows_it(self):
+        c, s, _ = make()
+        c.configure(max_intensity_a=999, max_intensity_b=-3)
+        self.assertEqual((s.max_intensity_a, s.max_intensity_b), (200, 0))
+        lim = c.snapshot()["limits"]
+        self.assertEqual((lim["max_intensity_a"], lim["max_intensity_b"]), (200, 0))
+        self.assertNotIn("max_intensity", lim)   # there is no global ceiling any more
+
+    def test_ai_ceiling_applies_on_top(self):
+        c, _, _ = make(max_intensity_a=100, ai_cap=70, ai_enabled=True)
+        self.assertEqual(c.set_intensity("A", 150, "ai")["applied"], 70.0)
+
+    def test_the_global_ceiling_is_gone(self):
+        c, _, _ = make()
+        with self.assertRaises(ControlError):
+            c.configure(max_intensity=50)
+        with self.assertRaises(TypeError):
+            Settings(max_intensity=50)
+
+
+class IntensityBalance(unittest.TestCase):
+    def test_configure_clamps_to_0_255_and_reports_the_change(self):
+        c, s, _ = make()
+        self.assertEqual(c.configure(width_balance_a=300, width_balance_b=-4), {"width_balance_a", "width_balance_b"})
+        self.assertEqual((s.width_balance_a, s.width_balance_b), (255, 0))
+
+    def test_nothing_changed_nothing_reported(self):
+        c, s, _ = make()
+        self.assertEqual(c.configure(width_balance_a=s.width_balance_a), set())
+
+    def test_a_channel_does_not_move_the_other(self):
+        c, s, _ = make()
+        before = s.width_balance_b
+        c.configure(width_balance_a=180)
+        self.assertEqual((s.width_balance_a, s.width_balance_b), (180, before))
+
+    def test_it_does_not_change_the_intensity_or_the_pulse_width(self):
+        c, _, _ = make()
+        c.set_intensity("A", 40, "gui")
+        c.set_width("A", 70, "gui")
+        c.configure(width_balance_a=220)
+        ch = c.snapshot()["channels"]["A"]
+        self.assertEqual((ch["target"], ch["width"]), (40.0, 70.0))
 
 
 class AiRules(unittest.TestCase):
@@ -88,7 +173,7 @@ class AiRules(unittest.TestCase):
         self.assertEqual(c.snapshot()["ai_last_action"], "intensity A+B = 50")
 
     def test_ai_cannot_exceed_global_cap(self):
-        c, _, _ = make(max_intensity=30, ai_cap=100)
+        c, _, _ = make(max_intensity_a=30, ai_cap=100)
         c.configure(ai_enabled=True)
         self.assertEqual(c.set_intensity("A", 90, "ai")["applied"], 30.0)
 
@@ -170,15 +255,15 @@ class Safety(unittest.TestCase):
         c, _, _ = make(ramp_up_per_s=0)
         c.set_intensity("A", 150, "gui")
         c.step(0.1)
-        c.configure(max_intensity=80)
+        c.configure(max_intensity_a=80)
         self.assertEqual(c.step(0.1).intensity[0], 80)
 
     def test_configure_unknown_key_and_clamping(self):
         c, s, _ = make()
         with self.assertRaises(ControlError):
             c.configure(banana=1)
-        c.configure(max_intensity=999, ai_cap=-5)
-        self.assertEqual((s.max_intensity, s.ai_cap), (200, 0))
+        c.configure(max_intensity_a=999, ai_cap=-5)
+        self.assertEqual((s.max_intensity_a, s.ai_cap), (200, 0))
 
     def test_watchdog_only_zeroes_osc_driven_channels(self):
         c, _, clock = make(osc_timeout_s=5, ramp_up_per_s=0)

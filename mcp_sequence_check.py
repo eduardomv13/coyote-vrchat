@@ -133,10 +133,11 @@ def main():
             print("    The Coyote is not connected. Connect it in the window (or use --allow-disconnected).")
             return 1
 
-        cap = min(lim["ai_cap"], lim["max_intensity"])
+        ceilings = {c: lim[f"max_intensity_{c.lower()}"] for c in chans}
+        cap = min(lim["ai_cap"], *ceilings.values())
         ramp = lim["ramp_up_per_s"]
-        print(f"    AI ceiling: {lim['ai_cap']} | global ceiling: {lim['max_intensity']} | "
-              f"max rise: {ramp or 'unlimited'}/s")
+        print(f"    AI ceiling: {lim['ai_cap']} | channel ceilings: "
+              + ", ".join(f"{c} {v}" for c, v in ceilings.items()) + f" | max rise: {ramp or 'unlimited'}/s")
         print(f"\nSequence on channel {args.channel}:")
         for value, secs in DEFAULT_STEPS:
             note = f"  <- will be limited to {cap} by the ceiling" if value > cap else ""

@@ -65,11 +65,15 @@ class Settings:
     device_address: str = ""
     auto_reconnect: bool = True
     # --- limits (apply to every source)
-    max_intensity: int = 200          # soft limit written to the device (BF) and the ceiling for everything
+    max_intensity_a: int = 200        # ceiling of channel A: the soft limit written to the device (BF) and the cap for every source
+    max_intensity_b: int = 200        # the same for channel B
     ramp_up_per_s: int = 100          # max rise in units/s (0 = unlimited); lowering is always immediate
-    # --- balance (BF) — see docs: 0..255
-    freq_balance_a: int = 160
+    # --- balance (BF), 0..255, kept by the device across power cycles
+    freq_balance_a: int = 160         # Frequency Balance Parameter 1 (no control in the window)
     freq_balance_b: int = 160
+    # Frequency Balance Parameter 2, the "Pulse intensity balance": higher = low-frequency pulses feel stronger at the same
+    # intensity. The "Intensity balance" sliders of the Extras tab. (Not the per-pulse "width" of the channel panels, which
+    # travels in every B0 packet.)
     width_balance_a: int = 100
     width_balance_b: int = 100
     # --- VRChat OSC (VRChat SENDS on 9001 by default)
@@ -108,6 +112,10 @@ class Settings:
     default_freq_hz: float = 50.0
     default_width: int = 100
 
+    def channel_ceiling(self, i: int) -> int:
+        """Ceiling of channel `i` (0 = A, 1 = B)."""
+        return self.max_intensity_b if i else self.max_intensity_a
+
     def shock_limits(self, ch: str) -> tuple:
         """(min %, max %, min s, max s) of one channel, "A" or "B"."""
         c = str(ch).lower()
@@ -115,7 +123,8 @@ class Settings:
                 getattr(self, f"shock_{c}_min_s"), getattr(self, f"shock_{c}_max_s"))
 
     def validate(self) -> "Settings":
-        self.max_intensity = _clamp_int(self.max_intensity, 0, 200, 200)
+        self.max_intensity_a = _clamp_int(self.max_intensity_a, 0, 200, 200)
+        self.max_intensity_b = _clamp_int(self.max_intensity_b, 0, 200, 200)
         self.ramp_up_per_s = _clamp_int(self.ramp_up_per_s, 0, 400, 100)
         for name in ("freq_balance_a", "freq_balance_b", "width_balance_a", "width_balance_b"):
             setattr(self, name, _clamp_int(getattr(self, name), 0, 255, 100))
@@ -199,6 +208,16 @@ def _migrate_single_shock(raw: dict) -> None:
                               "b": "B" in letters or "A" not in letters}]
 
 
+def _migrate_global_ceiling(raw: dict) -> None:
+    """Up to 1.3.0 ONE ceiling (`max_intensity`) capped both channels, and each channel could have a lower one of its own.
+    Now each channel has only its own, so an old global value is folded into both: the ceilings in force do not change."""
+    if not isinstance(raw, dict) or "max_intensity" not in raw:
+        return
+    old = _clamp_int(raw.pop("max_intensity"), 0, 200, 200)
+    for key in ("max_intensity_a", "max_intensity_b"):
+        raw[key] = min(_clamp_int(raw.get(key, 200), 0, 200, 200), old)
+
+
 def load_settings(path: Optional[Path] = None) -> Settings:
     if path is None and not default_settings_path().exists():
         _import_store_python_settings(default_settings_path())
@@ -209,6 +228,7 @@ def load_settings(path: Optional[Path] = None) -> Settings:
             raw = json.loads(path.read_text(encoding="utf-8"))
             known = {f.name for f in fields(Settings)}
             _migrate_single_shock(raw)
+            _migrate_global_ceiling(raw)
             for key, value in raw.items():
                 if key in known:
                     if key == "chatbox_text" and value in _OLD_DEFAULT_CHATBOX_TEXTS:

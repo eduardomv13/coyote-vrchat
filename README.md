@@ -52,7 +52,7 @@ an intensity ceiling, a latched emergency stop, and an optional watchdog. Detail
   add more) fires timed shocks. **Each channel has its own random power and its own random duration** (up to 30 s), and the
   numbers are shown in the VRChat chatbox.
 - A window with **three tabs**: *Coyote settings*, *Shock contact* and *Extras*.
-- Safety layer: intensity ceiling, maximum rise speed, latched emergency stop, OSC watchdog, zero on (re)connect.
+- Safety layer: an intensity ceiling for each channel, maximum rise speed, latched emergency stop, OSC watchdog, zero on (re)connect.
 - Optional AI control through a localhost-only, token-protected API and an MCP server (Claude Code / Claude Desktop),
   with its own lower ceiling.
 - An optional **in-game control panel for your avatar** (sliders, buttons, frequency; a Unity package that installs with
@@ -140,12 +140,13 @@ three tabs:
 | **Coyote settings** | Bluetooth connection | Scan, connect, disconnect, battery, errors, automatic reconnection |
 | | Channel A / Channel B | Intensity 0–200 (slider, −10/−1/+1/+10, Zero), frequency 1–100 Hz, pulse width 0–100. The ▼ on the slider shows the value actually going out during the ramp-up; the red mark is the ceiling |
 | | Patterns | Constant, Breathing, Pulses, Heartbeat, Ramp, Frequency sweep, Random, Staccato; speed, channels and A/B alternation |
-| | Safety limits | Intensity ceiling, maximum rise speed, OSC watchdog |
+| | Safety limits | A separate intensity ceiling for channel A and for channel B, maximum rise speed, OSC watchdog |
 | **Shock contact** | Shock contact trigger | The on/off switch (always starts off), what the trigger is doing, the last touch, and test buttons (A+B, A, B) |
 | | Contact triggers | The contacts (avatar parameters) that fire a shock and which channels each one fires; add as many as you like |
 | | Channel A shock / Channel B shock | For each channel: a lowest and a highest random power, and a lowest and a highest random duration (up to 30 s) |
 | | VRChat chatbox message | The message sent to the chatbox when a shock starts, how long it stays, the port, and a test button |
 | **Extras** | VRChat OSC | Port, address and parameter names; shows whether packets are arriving |
+| | Intensity balance | One slider per channel (0–255) that makes low-frequency pulses feel stronger at the same intensity; it is stored in the Coyote itself (see section 5) |
 | | AI (Claude Code / MCP) | Turns AI control on/off, AI ceiling, command to register in Claude Code |
 | | Log | Everything that happened (connections, stops, AI actions…) |
 
@@ -248,9 +249,16 @@ Start the program with `--simulate` if you do not want the real device to react.
 - **Frequency: 1 to 100 Hz, not 200.** In the V3 protocol the frequency is sent as a *period in milliseconds*
   (10 to 1000 ms). That gives a maximum of **100 Hz** and a minimum of **1 Hz**. Above 100 Hz simply does not exist on
   the device, so the program caps it at 100 and never sends a value the device would discard.
-- **Intensity: 0 to 200.** The program writes the chosen ceiling into the device itself (the protocol's `BF` command,
+- **Intensity: 0 to 200.** The program writes each channel's ceiling into the device itself (the protocol's `BF` command,
   "soft limit") on every connection and uses 200 by default. If your device does not go above a lower value, check
   the limit configured in the device / DG-LAB app.
+- **Intensity balance (0 to 255, default 100).** The same `BF` command carries two more settings per channel, which the
+  device keeps across power cycles. *Frequency Balance Parameter 2*, the "Pulse intensity balance", is the **Intensity
+  balance** slider of the *Extras* tab: at a fixed channel intensity, higher values make low-frequency pulses feel
+  stronger. It is not the **pulse width** of the channel panels, which travels in every 100 ms packet and sets the
+  strength of each pulse directly. Raise it little by little: the same intensity feels stronger at low frequencies.
+  (*Frequency Balance Parameter 1*, which affects the throbbing feel of low frequencies, is sent with its default of 160
+  and has no slider.)
 - The Coyote needs a command **every 100 ms**; the program handles that in a separate task, so dragging or freezing
   the window does not interrupt anything.
 
@@ -292,7 +300,7 @@ Tools the AI gets: `coyote_status`, `coyote_set_intensity`, `coyote_set_frequenc
 Rules the AI **cannot** get around:
 
 - it only works with the box ticked; unticking it also zeroes what it had turned on;
-- intensity is limited to the **AI ceiling** (default **50**, adjustable on the slider) and to the global ceiling;
+- intensity is limited to the **AI ceiling** (default **50**, adjustable on the slider) and to the ceiling of each channel;
 - the rise respects the configured maximum rise speed;
 - `coyote_stop` zeroes everything, but **only you** can re-enable it, from the window.
 

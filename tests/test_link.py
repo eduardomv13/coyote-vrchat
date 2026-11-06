@@ -130,7 +130,7 @@ class LinkTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await until(lambda: self.t.a == 100, 3.0))
 
     async def test_cap_goes_to_bf_and_is_enforced(self):
-        self.settings.max_intensity = 80
+        self.settings.max_intensity_a = self.settings.max_intensity_b = 80
         await self.connect()
         self.assertTrue(await until(lambda: len(self.t.writes) >= 1))
         self.assertEqual(list(self.t.writes[0][1:3]), [80, 80])
@@ -141,10 +141,39 @@ class LinkTests(unittest.IsolatedAsyncioTestCase):
     async def test_changing_cap_rewrites_bf(self):
         await self.connect()
         self.assertTrue(await until(lambda: len(self.b0s()) >= 2))
-        self.control.configure(max_intensity=120)
+        self.control.configure(max_intensity_a=120, max_intensity_b=120)
         self.link.bf_dirty = True
         self.link.poke()
         self.assertTrue(await until(lambda: self.t.soft == [120, 120]))
+
+    async def test_each_channel_has_its_own_soft_limit_on_the_device(self):
+        self.settings.max_intensity_a, self.settings.max_intensity_b = 60, 140
+        await self.connect()
+        self.assertTrue(await until(lambda: len(self.t.writes) >= 1))
+        self.assertEqual(list(self.t.writes[0][1:3]), [60, 140])
+        self.control.set_intensity("AB", 200, "gui")
+        self.assertTrue(await until(lambda: self.t.a == 60 and self.t.b == 140))
+        self.assertEqual(self.t.soft, [60, 140])
+
+    def bfs(self):
+        return [w for w in self.t.writes if w[0] == 0xBF]
+
+    async def test_intensity_balance_goes_to_bf_on_connect(self):
+        self.settings.width_balance_a, self.settings.width_balance_b = 30, 220
+        await self.connect()
+        self.assertTrue(await until(lambda: len(self.bfs()) >= 1))
+        # 0xBF | soft A, B | frequency balance A, B | intensity balance A, B (the doc's order)
+        self.assertEqual(self.bfs()[0], bytes([0xBF, 200, 200, 160, 160, 30, 220]))
+
+    async def test_changing_the_intensity_balance_rewrites_bf(self):
+        await self.connect()
+        self.assertTrue(await until(lambda: len(self.bfs()) >= 1 and len(self.b0s()) >= 2))
+        n = len(self.bfs())
+        self.control.configure(width_balance_a=180)
+        self.link.bf_dirty = True
+        self.link.poke()
+        self.assertTrue(await until(lambda: len(self.bfs()) > n))
+        self.assertEqual(self.bfs()[-1], bytes([0xBF, 200, 200, 160, 160, 180, 100]))
 
     async def test_emergency_stop_is_fast_even_with_pending_ack(self):
         await self.connect()

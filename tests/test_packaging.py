@@ -164,23 +164,25 @@ class ImportOfTheStorePythonSettings(unittest.TestCase):
     def test_the_limits_and_the_token_come_along_once(self):
         self.assertFalse(default_settings_path().exists())
         s = load_settings()
-        self.assertEqual((s.max_intensity, s.ramp_up_per_s, s.api_token), (137, 400, "old-token"))
+        # the store copy still has the old global ceiling: it becomes the ceiling of both channels
+        self.assertEqual((s.max_intensity_a, s.max_intensity_b, s.ramp_up_per_s, s.api_token), (137, 137, 400, "old-token"))
         self.assertTrue(default_settings_path().exists())
 
     def test_existing_settings_are_never_overwritten(self):
         default_settings_path().parent.mkdir(parents=True)
-        default_settings_path().write_text(json.dumps({"max_intensity": 90, "api_token": "mine"}), encoding="utf-8")
+        default_settings_path().write_text(json.dumps({"max_intensity_a": 90, "api_token": "mine"}), encoding="utf-8")
         s = load_settings()
-        self.assertEqual((s.max_intensity, s.api_token), (90, "mine"))
+        self.assertEqual((s.max_intensity_a, s.api_token), (90, "mine"))
 
     def test_an_explicit_path_is_not_touched(self):
         s = load_settings(Path(self.tmp.name) / "other.json")
-        self.assertEqual(s.max_intensity, 200)
+        self.assertEqual((s.max_intensity_a, s.max_intensity_b), (200, 200))
         self.assertFalse(default_settings_path().exists())
 
     def test_nothing_to_import_gives_the_defaults(self):
         self.store.unlink()
-        self.assertEqual(load_settings().max_intensity, 200)
+        s = load_settings()
+        self.assertEqual((s.max_intensity_a, s.max_intensity_b), (200, 200))
 
 
 class BuildRecipe(unittest.TestCase):

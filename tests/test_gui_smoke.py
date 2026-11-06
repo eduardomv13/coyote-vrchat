@@ -401,14 +401,63 @@ class GuiSmoke(unittest.TestCase):
     # ---- limites
     def test_limits_apply_on_release(self):
         lim = self.app.limits
-        lim.s_max._press(click(150))
-        lim.s_max._up(click(150))
-        cap = self.engine.settings.max_intensity
+        lim.s_max_a._press(click(150))
+        lim.s_max_a._up(click(150))
+        cap = self.engine.settings.max_intensity_a
         self.assertAlmostEqual(cap, 100, delta=2)
+        self.assertEqual(self.engine.settings.max_intensity_b, 200)      # channel B did not move
         self.refresh()
         self.assertEqual(self.app.panel_a.s_int.limit, float(cap))
+        self.assertEqual(self.app.panel_b.s_int.limit, 200.0)
         self.app.panel_a.s_int._press(click(9999))          # does not go past the ceiling
         self.assertEqual(self.snap()["channels"]["A"]["target"], float(cap))
+
+    def test_each_channel_has_its_own_ceiling_slider_and_there_is_no_global_one(self):
+        lim = self.app.limits
+        self.assertNotIn("s_max", vars(lim))                             # the global ceiling slider is gone
+        self.assertNotIn("lbl_max", vars(lim))
+        lim.s_max_b.release(60)
+        self.assertEqual((self.engine.settings.max_intensity_a, self.engine.settings.max_intensity_b), (200, 60))
+        self.refresh()
+        self.assertEqual((self.app.panel_a.s_int.limit, self.app.panel_b.s_int.limit), (200.0, 60.0))
+        self.assertIn("Channel B ceiling: 60", lim.lbl_max_b.cget("text"))
+        self.assertIn("Channel A ceiling: 200", lim.lbl_max_a.cget("text"))
+        self.app.panel_b.s_int._press(click(9999))
+        self.app.panel_a.s_int._press(click(9999))
+        ch = self.snap()["channels"]
+        self.assertEqual((ch["A"]["target"], ch["B"]["target"]), (200.0, 60.0))
+
+    # ---- intensity balance (Extras tab)
+    def test_the_intensity_balance_card_applies_per_channel_on_release(self):
+        card = self.app.balance
+        s = self.engine.settings
+        self.engine.link.bf_dirty = False
+        card.sliders["A"].release(180)
+        self.assertEqual((s.width_balance_a, s.width_balance_b), (180, 100))     # channel B did not move
+        self.assertTrue(self.engine.link.bf_dirty)                               # the device gets the new BF
+        self.refresh()
+        self.assertIn("Channel A intensity balance: 180 / 255", card.lbl["A"].cget("text"))
+        self.assertIn("Channel B intensity balance: 100 / 255", card.lbl["B"].cget("text"))
+        card.sliders["B"].release(30)
+        self.assertEqual((s.width_balance_a, s.width_balance_b), (180, 30))
+
+    def test_the_intensity_balance_card_follows_changes_made_elsewhere(self):
+        self.engine.configure(width_balance_a=222, width_balance_b=11)
+        self.refresh()
+        card = self.app.balance
+        self.assertEqual((card.sliders["A"].value, card.sliders["B"].value), (222.0, 11.0))
+
+    def test_the_intensity_balance_slider_goes_from_0_to_255(self):
+        card = self.app.balance
+        self.assertEqual((card.sliders["A"].vmin, card.sliders["A"].vmax), (0.0, 255.0))
+        card.sliders["A"].release(9999)           # a slider can never send more than the device accepts
+        self.assertLessEqual(self.engine.settings.width_balance_a, 255)
+
+    def test_the_intensity_balance_is_saved_with_the_settings(self):
+        import json
+        self.app.balance.sliders["B"].release(77)
+        data = json.loads((Path(self.tmp.name) / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["width_balance_b"], 77)
 
     def test_ramp_and_watchdog_sliders(self):
         self.app.limits.s_ramp.release(150)
@@ -421,10 +470,11 @@ class GuiSmoke(unittest.TestCase):
     def test_settings_saved_without_ai_enabled(self):
         self.app.ai.v_enabled.set(True)
         self.app.ai._toggle()
-        self.engine.configure(max_intensity=150)
+        self.engine.configure(max_intensity_a=150)
         import json
         data = json.loads((Path(self.tmp.name) / "settings.json").read_text(encoding="utf-8"))
-        self.assertEqual(data["max_intensity"], 150)
+        self.assertEqual(data["max_intensity_a"], 150)
+        self.assertNotIn("max_intensity", data)
         self.assertFalse(data["ai_enabled"])
 
     # ---- IA
@@ -781,11 +831,12 @@ class GuiSmoke(unittest.TestCase):
         self.assertEqual((self.app.shock_b.s_pmin.value, self.app.shock_b.s_pmax.value), (10.0, 30.0))
 
     def test_the_power_labels_show_the_ceiling(self):
-        self.engine.configure(max_intensity=137)
+        self.engine.configure(max_intensity_a=137)
         self.refresh()
         text = self.app.shock_a.lbl_pmin.cget("text")
         self.assertIn("[ceiling 137]", text)
         self.assertIn("= 14 of 200", text)                  # 10% of 137
+        self.assertNotIn("[ceiling", self.app.shock_b.lbl_pmin.cget("text"))   # channel B keeps its own (200)
 
     # ---- the contact list
     def test_the_contact_list_starts_with_the_standard_contact_firing_both_channels(self):

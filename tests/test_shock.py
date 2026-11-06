@@ -388,18 +388,26 @@ class RefusalTests(ShockCase):
         self.assertTrue(self.logged("Shock stopped"))
 
     def test_a_zero_ceiling_means_no_shock(self):
-        self.engine.configure(max_intensity=0)
+        self.engine.configure(max_intensity_a=0, max_intensity_b=0)
         self.tap()
         self.assertFalse(self.ctl.shock_active())
         self.assertIsNone(self.chat())
         self.assertTrue(self.logged("the intensity ceiling is 0"))
+
+    def test_a_channel_with_a_zero_ceiling_is_left_out_but_the_other_still_shocks(self):
+        self.engine.configure(max_intensity_a=0)
+        res = self.engine.shock.fire("test")
+        self.assertTrue(res["fired"], res)
+        self.assertEqual(res["channels"], "B")                     # A could not deliver anything, so it is not announced
+        self.assertEqual(self.out(), (0.0, 80.0))
+        self.assertNotIn("A", self.chat()[1][0].replace("Shock", ""))
 
 
 class PowerTests(ShockCase):
     def test_the_power_is_random_inside_the_range_and_follows_the_ceiling(self):
         self.pct(10, 12)
         self.seconds(1)
-        self.engine.configure(max_intensity=100)
+        self.engine.configure(max_intensity_a=100, max_intensity_b=100)
         self.engine.shock._rng = random.Random(7)
         seen = {"A": set(), "B": set()}
         for _ in range(80):
@@ -455,7 +463,7 @@ class PowerTests(ShockCase):
     def test_every_value_in_the_widest_range_stays_inside_the_ceiling(self):
         self.pct(1, 100)
         self.seconds(1)
-        self.engine.configure(max_intensity=150)
+        self.engine.configure(max_intensity_a=150, max_intensity_b=150)
         self.engine.shock._rng = random.Random(3)
         for _ in range(200):
             res = self.engine.shock.fire("test")
@@ -469,8 +477,22 @@ class PowerTests(ShockCase):
     def test_lowering_the_ceiling_during_a_shock_lowers_the_output(self):
         self.tap()
         self.assertEqual(self.out(), (80.0, 80.0))
-        self.engine.configure(max_intensity=50)
+        self.engine.configure(max_intensity_a=50, max_intensity_b=50)
         self.assertEqual(self.out(), (50.0, 50.0))
+
+    def test_lowering_one_channels_ceiling_lowers_only_that_channel(self):
+        self.tap()
+        self.assertEqual(self.out(), (80.0, 80.0))
+        self.engine.configure(max_intensity_b=30)
+        self.assertEqual(self.out(), (80.0, 30.0))
+
+    def test_each_channel_draws_its_power_from_its_own_ceiling(self):
+        self.pct(50, 50)
+        self.seconds(1)
+        self.engine.configure(max_intensity_a=80, max_intensity_b=200)
+        res = self.engine.shock.fire("test")
+        self.assertTrue(res["fired"], res)
+        self.assertEqual((res["shocks"]["A"]["level"], res["shocks"]["B"]["level"]), (40.0, 100.0))   # 50% of 80, of 200
 
     def test_a_shock_is_a_minimum_and_never_lowers_what_is_already_asked(self):
         self.engine._on_osc("/avatar/parameters/CoyoteA", [0.75])  # the panel asks for A = 75% of the ceiling = 150
@@ -912,11 +934,12 @@ class ControllerTests(unittest.TestCase):
             c.start_shocks({"A": (30, 5)})
 
     def test_the_level_is_clamped_to_the_ceiling(self):
-        s = Settings(max_intensity=60).validate()
+        s = Settings(max_intensity_a=60).validate()
         c = Controller(s)
         res = c.start_shock("A", 200, 2)
         self.assertEqual(res["applied"], 60.0)
         self.assertTrue(res["clamped"])
+        self.assertEqual(c.start_shock("B", 200, 2)["applied"], 200.0)      # B has its own ceiling
 
 
 class OverTheWire(unittest.TestCase):

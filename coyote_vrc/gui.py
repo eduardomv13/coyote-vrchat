@@ -619,7 +619,7 @@ class AiCard(Card):
         want = bool(self.v_enabled.get())
         if want:
             s = self.app.engine.settings
-            limit = min(s.ai_cap, s.max_intensity)
+            limit = min(s.ai_cap, max(s.max_intensity_a, s.max_intensity_b))
             ok = messagebox.askyesno(
                 "Allow AI control",
                 "An AI connected to this program will be able to change the intensity (up to "
@@ -644,10 +644,10 @@ class AiCard(Card):
             self.v_enabled.set(lim["ai_enabled"])
         self.s_cap.set(lim["ai_cap"])
         shown = self.s_cap.value
-        effective = min(shown, lim["max_intensity"])
+        effective = min(shown, max(lim["max_intensity_a"], lim["max_intensity_b"]))
         text = f"Maximum intensity the AI may request: {shown:.0f}"
         if effective != shown:
-            text += f"  (effectively {effective:.0f}, because of the global ceiling)"
+            text += f"  (effectively {effective:.0f}, because of the channel ceilings)"
         set_text(self.lbl_cap, text)
         set_text(self.lbl_last, "Last AI action: " + (ai_last or "—"))
         if api_error:
@@ -665,11 +665,17 @@ class LimitsCard(Card):
         s = app.engine.settings
         b = self.body
 
-        self.lbl_max = make_label(b, "", fg=TEXT)
-        self.lbl_max.pack(fill="x")
-        self.s_max = GoldSlider(b, 0, 200, value=s.max_intensity, command=self._max_label,
-                                release=lambda v: app.engine.configure(max_intensity=int(v)))
-        self.s_max.pack(fill="x")
+        self.lbl_max_a = make_label(b, "", fg=TEXT)
+        self.lbl_max_a.pack(fill="x")
+        self.s_max_a = GoldSlider(b, 0, 200, value=s.max_intensity_a, command=self._max_a_label,
+                                  release=lambda v: app.engine.configure(max_intensity_a=int(v)))
+        self.s_max_a.pack(fill="x")
+
+        self.lbl_max_b = make_label(b, "", fg=TEXT)
+        self.lbl_max_b.pack(fill="x", pady=(4, 0))
+        self.s_max_b = GoldSlider(b, 0, 200, value=s.max_intensity_b, command=self._max_b_label,
+                                  release=lambda v: app.engine.configure(max_intensity_b=int(v)))
+        self.s_max_b.pack(fill="x")
 
         self.lbl_ramp = make_label(b, "", fg=TEXT)
         self.lbl_ramp.pack(fill="x", pady=(4, 0))
@@ -683,12 +689,15 @@ class LimitsCard(Card):
                                release=lambda v: app.engine.configure(osc_timeout_s=int(v)))
         self.s_wd.pack(fill="x")
 
-        make_label(b, "The global ceiling applies to sliders, VRChat and AI, and is also written to the device itself. "
+        make_label(b, "Each channel's ceiling applies to sliders, VRChat and AI, and is also written to the device itself. "
                       "Increasing intensity is always gradual (ramp); lowering is immediate.",
                    fg=DIM, font=(FONT, 9), wraplength=330, justify="left").pack(fill="x", pady=(6, 0))
 
-    def _max_label(self, v):
-        set_text(self.lbl_max, f"Intensity ceiling (all sources): {v:.0f} / 200")
+    def _max_a_label(self, v):
+        set_text(self.lbl_max_a, f"Channel A ceiling: {v:.0f} / 200")
+
+    def _max_b_label(self, v):
+        set_text(self.lbl_max_b, f"Channel B ceiling: {v:.0f} / 200")
 
     def _ramp_label(self, v):
         if v <= 0:
@@ -703,12 +712,47 @@ class LimitsCard(Card):
             set_text(self.lbl_wd, f"If VRChat is silent for {v:.0f} s: zero the OSC channels")
 
     def refresh(self, lim):
-        self.s_max.set(lim["max_intensity"])
+        self.s_max_a.set(lim["max_intensity_a"])
+        self.s_max_b.set(lim["max_intensity_b"])
         self.s_ramp.set(lim["ramp_up_per_s"])
         self.s_wd.set(lim["osc_timeout_s"])
-        self._max_label(self.s_max.value)
+        self._max_a_label(self.s_max_a.value)
+        self._max_b_label(self.s_max_b.value)
         self._ramp_label(self.s_ramp.value)
         self._wd_label(self.s_wd.value)
+
+
+class BalanceCard(Card):
+    """Intensity balance (BF, "Frequency Balance Parameter 2" of the DG-LAB protocol): a setting of the Coyote itself that
+    changes how strong low-frequency pulses feel compared with high-frequency ones, at the same channel intensity."""
+
+    def __init__(self, parent, app):
+        super().__init__(parent, "INTENSITY BALANCE")
+        self.app = app
+        s = app.engine.settings
+        b = self.body
+        self.lbl, self.sliders = {}, {}
+        for i, ch in enumerate("AB"):
+            key = f"width_balance_{ch.lower()}"
+            self.lbl[ch] = make_label(b, "", fg=TEXT)
+            self.lbl[ch].pack(fill="x", pady=(0 if i == 0 else 4, 0))
+            self.sliders[ch] = GoldSlider(b, 0, 255, value=getattr(s, key), command=lambda v, c=ch: self._label(c, v),
+                                          release=lambda v, k=key: app.engine.configure(**{k: int(v)}))
+            self.sliders[ch].pack(fill="x")
+        make_label(b, "Higher values make low-frequency pulses feel stronger at the same intensity (default 100). It is "
+                      "saved in the Coyote itself and applies when you let go of the slider. It is not the pulse width "
+                      "of each channel, which is sent with every pulse. Raise it little by little: the same intensity "
+                      "will feel stronger at low frequencies.",
+                   fg=DIM, font=(FONT, 9), wraplength=330, justify="left").pack(fill="x", pady=(6, 0))
+
+    def _label(self, ch, v):
+        set_text(self.lbl[ch], f"Channel {ch} intensity balance: {v:.0f} / 255")
+
+    def refresh(self):
+        s = self.app.engine.settings
+        for ch in "AB":
+            self.sliders[ch].set(getattr(s, f"width_balance_{ch.lower()}"))
+            self._label(ch, self.sliders[ch].value)
 
 
 class ShockTriggerCard(Card):
@@ -936,13 +980,13 @@ class ShockChannelCard(Card):
 
     # ---- helpers
     def _units(self, pct):
-        cap = self.app.engine.control.cap("gui")
+        cap = self.app.engine.control.cap("gui", self.ch)
         return 0 if cap <= 0 else max(1, int(round(pct * cap / 100.0)))
 
     def _labels(self):
         pmin, pmax = int(self.s_pmin.value), int(self.s_pmax.value)
         smin, smax = int(self.s_smin.value), int(self.s_smax.value)
-        cap = self.app.engine.control.cap("gui")
+        cap = self.app.engine.control.cap("gui", self.ch)
         note = f"  [ceiling {cap}]" if cap != 200 else ""
         set_text(self.lbl_pmin, f"Minimum random power: {pmin}%   (= {self._units(pmin)} of 200){note}")
         set_text(self.lbl_pmax, f"Maximum random power: {pmax}%   (= {self._units(pmax)} of 200){note}")
@@ -1237,12 +1281,14 @@ class App(tk.Tk):
         self.chat.pack(fill="x")
 
     def _build_extras_tab(self, inner):
-        """VRChat OSC, the AI (Claude Code / MCP) and the log."""
+        """VRChat OSC, the intensity balance, the AI (Claude Code / MCP) and the log."""
         cols = self._columns(inner)
         self.osc = OscCard(cols[0], self)
+        self.balance = BalanceCard(cols[0], self)
         self.ai = AiCard(cols[1], self)
         self.log = LogCard(cols[2])
         self.osc.pack(fill="x", pady=(0, 10))
+        self.balance.pack(fill="x", pady=(0, 10))
         self.ai.pack(fill="x", pady=(0, 10))
         self.log.pack(fill="both", expand=True)
 
@@ -1334,7 +1380,7 @@ class App(tk.Tk):
         else:
             self.chip_osc.show(DIM, "OSC: stopped")
         if lim["ai_enabled"]:
-            self.chip_ai.show(GOLD, f"AI: active (up to {min(lim['ai_cap'], lim['max_intensity'])})")
+            self.chip_ai.show(GOLD, f"AI: active (up to {min(lim['ai_cap'], max(lim['max_intensity_a'], lim['max_intensity_b']))})")
         else:
             self.chip_ai.show(DIM, "AI: disabled")
         shock = e.shock_status()
@@ -1349,12 +1395,13 @@ class App(tk.Tk):
         else:
             self.chip_shock.show(DIM, "Shock trigger: off")
 
-        self.panel_a.refresh(snap["channels"]["A"], lim["max_intensity"], estop)
-        self.panel_b.refresh(snap["channels"]["B"], lim["max_intensity"], estop)
+        self.panel_a.refresh(snap["channels"]["A"], lim["max_intensity_a"], estop)
+        self.panel_b.refresh(snap["channels"]["B"], lim["max_intensity_b"], estop)
         self.bt.refresh(link)
         self.osc.refresh(osc, snap["osc"])
         self.pat.refresh(snap["pattern"])
         self.limits.refresh(lim)
+        self.balance.refresh()
         self.shock.refresh(shock, lim)
         self.contacts.refresh()
         self.shock_a.refresh()

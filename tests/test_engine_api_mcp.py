@@ -162,7 +162,7 @@ class OscIntegration(EngineCase):
         self.assertTrue(wait_for(lambda: self.target("A") == 100.0 and self.target("B") == 200.0))
 
     def test_cap_applies_to_osc_full_scale(self):
-        self.engine.configure(max_intensity=150)
+        self.engine.configure(max_intensity_b=150)
         self.send(osc.encode_message("/avatar/parameters/CoyoteB", 1.0))
         self.assertTrue(wait_for(lambda: self.target("B") == 150.0))
 
@@ -252,19 +252,50 @@ class SettingsTests(unittest.TestCase):
             path = Path(d) / "s.json"
             path.write_text("{ this is not json")
             s = load_settings(path)
-            self.assertEqual(s.max_intensity, 200)
+            self.assertEqual((s.max_intensity_a, s.max_intensity_b), (200, 200))
             self.assertTrue((Path(d) / "s.json.bak").exists())
 
     def test_validation_clamps(self):
-        s = Settings(max_intensity=999, ai_cap=-4, osc_port=70000, default_width=500, default_freq_hz=999).validate()
-        self.assertEqual((s.max_intensity, s.ai_cap, s.osc_port, s.default_width, s.default_freq_hz),
-                         (200, 0, 65535, 100, 100.0))
+        s = Settings(max_intensity_a=999, max_intensity_b=-1, width_balance_a=999, width_balance_b=-9, ai_cap=-4,
+                     osc_port=70000, default_width=500, default_freq_hz=999).validate()
+        self.assertEqual((s.max_intensity_a, s.max_intensity_b, s.width_balance_a, s.width_balance_b, s.ai_cap,
+                          s.osc_port, s.default_width, s.default_freq_hz),
+                         (200, 0, 255, 0, 0, 65535, 100, 100.0))
 
     def test_unknown_keys_ignored(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "s.json"
-            path.write_text(json.dumps({"max_intensity": 90, "coisa_antiga": 1}))
-            self.assertEqual(load_settings(path).max_intensity, 90)
+            path.write_text(json.dumps({"max_intensity_a": 90, "coisa_antiga": 1}))
+            self.assertEqual(load_settings(path).max_intensity_a, 90)
+
+    def test_an_old_global_ceiling_is_folded_into_both_channels(self):
+        # up to 1.3.0 `max_intensity` capped both channels; dropping it silently would raise the limit back to 200
+        cases = (
+            ({"max_intensity": 90}, (90, 90)),
+            ({"max_intensity": 150, "max_intensity_a": 100, "max_intensity_b": 200}, (100, 150)),
+            ({"max_intensity": 200, "max_intensity_a": 140, "max_intensity_b": 140}, (140, 140)),
+            ({"max_intensity": "junk", "max_intensity_a": 70}, (70, 200)),
+            ({"max_intensity": 60, "max_intensity_a": "junk"}, (60, 60)),
+        )
+        for raw, expected in cases:
+            with self.subTest(raw=raw), tempfile.TemporaryDirectory() as d:
+                path = Path(d) / "s.json"
+                path.write_text(json.dumps(raw))
+                s = load_settings(path)
+                self.assertEqual((s.max_intensity_a, s.max_intensity_b), expected)
+                self.assertFalse(hasattr(s, "max_intensity"))
+                save_settings(s, path)
+                self.assertNotIn("max_intensity", json.loads(path.read_text()))   # not written back
+
+    def test_intensity_balance_is_saved_and_loaded(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "s.json"
+            s = load_settings(path)
+            self.assertEqual((s.width_balance_a, s.width_balance_b), (100, 100))
+            s.width_balance_a, s.width_balance_b = 20, 250
+            save_settings(s, path)
+            loaded = load_settings(path)
+            self.assertEqual((loaded.width_balance_a, loaded.width_balance_b), (20, 250))
 
 
 class McpUnit(unittest.TestCase):

@@ -1,7 +1,8 @@
 """Shared control state (GUI, OSC and AI write here; the BLE loop reads from here every 100 ms).
 
 Safety rules implemented in this module:
-  * A single ceiling `max_intensity` for every source; the AI has its own ceiling (`ai_cap`) and only
+  * Each channel has its own intensity ceiling (`max_intensity_a` / `max_intensity_b`) for every source; the AI has its own
+    ceiling (`ai_cap`) on top and only
     acts if `ai_enabled` is switched on in the GUI (it always starts off).
   * Rise limit (`ramp_up_per_s`): intensity rises at most X units/s; lowering is immediate.
   * LATCHED emergency stop: zeroes everything and ignores new commands until re-enabled from the GUI.
@@ -87,7 +88,10 @@ class Frame:
 
 class Controller:
     _RANGES = {
-        "max_intensity": (0, 200),
+        "max_intensity_a": (0, 200),
+        "max_intensity_b": (0, 200),
+        "width_balance_a": (0, 255),   # BF "intensity balance" (device-level, see Settings)
+        "width_balance_b": (0, 255),
         "ramp_up_per_s": (0, 400),
         "ai_cap": (0, 200),
         "osc_timeout_s": (0, 3600),
@@ -130,8 +134,10 @@ class Controller:
             return (items[-1][0] if items else after), [t for _, t in items]
 
     # ------------------------------------------------------------------ limits
-    def cap(self, source: str) -> int:
-        c = self.settings.max_intensity
+    def cap(self, source: str, ch) -> int:
+        """Intensity ceiling of one channel (`ch`: 0/1 or "A"/"B") for `source`; the AI's own ceiling applies on top."""
+        (i,) = channels_from(ch)
+        c = self.settings.channel_ceiling(i)
         return min(c, self.settings.ai_cap) if source == "ai" else c
 
     def _guard_ai(self, source: str) -> None:
@@ -141,7 +147,7 @@ class Controller:
     def apply_limits(self) -> None:
         with self._lock:
             for i, c in enumerate(self.ch):
-                limit = self.cap("ai" if self.last_source[i] == "ai" else "gui")
+                limit = self.cap("ai" if self.last_source[i] == "ai" else "gui", i)
                 c.target = min(c.target, limit)
                 c.output = min(c.output, limit)
 
@@ -153,18 +159,25 @@ class Controller:
             self._guard_ai(source)
             if self.estopped:
                 raise ControlForbidden("EMERGENCY STOP active — re-enable it from the GUI")
-            limit = self.cap(source)
-            applied = max(0.0, min(float(limit), v))
+            limits = {i: self.cap(source, i) for i in chans}
+            per = {i: max(0.0, min(float(limits[i]), v)) for i in chans}
             for i in chans:
-                self.ch[i].target = applied
+                self.ch[i].target = per[i]
                 self.last_source[i] = source
+            applied = min(per.values())   # when the channels have different ceilings, report the lowest
             if source == "ai":
                 self.ai_last_action = f"intensity {_names(chans)} = {applied:.0f}"
-            return {"channels": _names(chans), "applied": applied, "clamped": applied != v, "limit": limit}
+            out = {"channels": _names(chans), "applied": applied, "clamped": applied != v, "limit": min(limits.values())}
+            if len(chans) > 1 and len(set(per.values())) > 1:
+                out["per_channel"] = {"AB"[i]: per[i] for i in chans}
+            return out
 
     def set_fraction(self, ch, fraction, source: str = "osc") -> dict:
         f = max(0.0, min(1.0, _number(fraction, "fraction")))
-        return self.set_intensity(ch, f * self.cap(source), source)
+        chans = channels_from(ch)
+        if len(chans) == 1:
+            return self.set_intensity(ch, f * self.cap(source, chans[0]), source)
+        return self.set_intensity(ch, f * min(self.cap(source, i) for i in chans), source)
 
     def set_frequency(self, ch, hz, source: str = "gui") -> dict:
         chans = channels_from(ch)
@@ -269,7 +282,7 @@ class Controller:
             result, parts = {}, []
             for i in sorted(wanted):
                 v, secs = wanted[i]
-                applied = max(0.0, min(float(self.cap("gui")), v))
+                applied = max(0.0, min(float(self.cap("gui", i)), v))
                 duration = max(0.0, min(float(SHOCK_MAX_SECONDS), secs))
                 self.shock_level[i] = applied
                 self.shock_until[i] = now + duration
@@ -344,7 +357,7 @@ class Controller:
                         if self.last_source[i] == "ai" and c.target > 0:
                             c.target = 0.0
                             self.log(f"Channel {'AB'[i]} zeroed: AI disabled")
-            if changed & {"max_intensity", "ai_cap", "ai_enabled"}:
+            if changed & {"max_intensity_a", "max_intensity_b", "ai_cap", "ai_enabled"}:
                 self.apply_limits()
         return changed
 
@@ -376,10 +389,10 @@ class Controller:
             now = self._clock()
             self._watchdog(now)
             self._expire_shock(now)
-            cap = self.settings.max_intensity
             up = self.settings.ramp_up_per_s
             intens: list[int] = []
             for i, c in enumerate(self.ch):
+                cap = self.settings.channel_ceiling(i)
                 target = c.target
                 if self._channel_shocking(i, now) and not self.estopped:
                     target = max(target, min(self.shock_level[i], float(cap)))  # a minimum, never a reduction
@@ -438,7 +451,8 @@ class Controller:
                 "estopped": self.estopped,
                 "pattern": self._pattern_state(),
                 "limits": {
-                    "max_intensity": self.settings.max_intensity,
+                    "max_intensity_a": self.settings.max_intensity_a,
+                    "max_intensity_b": self.settings.max_intensity_b,
                     "ai_cap": self.settings.ai_cap,
                     "ramp_up_per_s": self.settings.ramp_up_per_s,
                     "ai_enabled": self.settings.ai_enabled,

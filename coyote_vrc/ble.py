@@ -359,7 +359,7 @@ class CoyoteLink:
     def _bf(self) -> bytes:
         s = self.settings
         return protocol.encode_bf(
-            s.max_intensity, s.max_intensity,
+            s.channel_ceiling(0), s.channel_ceiling(1),
             s.freq_balance_a, s.freq_balance_b, s.width_balance_a, s.width_balance_b,
         )
 
